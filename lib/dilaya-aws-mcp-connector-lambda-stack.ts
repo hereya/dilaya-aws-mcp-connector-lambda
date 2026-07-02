@@ -39,10 +39,6 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // defers). If ever set, the authorizer falls back to legacy single-org mode.
     const organizationId = process.env["organizationId"] ?? "";
 
-    // Optional RFC 8707 audience binding: the connector's own /mcp resource URL.
-    // When present, the authorizer requires the token's aud to match it.
-    const expectedAudience = process.env["expectedAudience"] ?? "";
-
     const memorySize = process.env["memorySize"]
       ? parseInt(process.env["memorySize"])
       : 256;
@@ -54,6 +50,16 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     const customDomainZone =
       process.env["customDomainZone"] ?? extractDomainZone(customDomain);
     const wildcardCertificateArn = process.env["wildcardCertificateArn"];
+
+    // RFC 8707 audience binding: the connector's own /mcp resource URL. Derived
+    // from customDomain so it can't be dropped (Hereya only forwards hereyavars
+    // backed by a declared app parameter, and a free-form `expectedAudience`
+    // var is silently filtered). An explicit override still wins. When set, the
+    // authorizer requires the token's aud to match — so a token minted for a
+    // different resource can't be replayed here.
+    const expectedAudience =
+      process.env["expectedAudience"] ||
+      (customDomain ? `https://${customDomain}/mcp` : "");
     // Extra request headers the frontend CloudFront distribution should forward to
     // origin (comma-separated). CloudFront strips any header not whitelisted, so
     // custom auth/webhook headers must be listed here. NOTE: `Authorization` CANNOT
