@@ -391,6 +391,20 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public Telegram routes (NO JWT authorizer). Telegram's servers POST inbound
+    // updates to /o/{orgId}/{app}/telegram/webhook (authenticated by the
+    // per-app secret-token header, checked in the Lambda), and the user opens
+    // /o/{orgId}/{app}/telegram/setup to enter the bot token out of band (a
+    // signed single-use link). Org + app live in the PATH; these are STATIC (one
+    // deployment serves every org) — no runtime route creation. Handler
+    // validates the exact sub-path. Invoke permission is the api-wide
+    // HttpApiInvokeAll grant below.
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/telegram/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
@@ -623,12 +637,17 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     );
 
     // -----------------------------------------------------------------------
-    // SSM SecureString for per-app agent-session signing secrets.
-    // Prefix-bound to /hereya/{organizationId}/apps/* so the org Lambda and
-    // per-app Lambdas can only touch their own org's secrets.
+    // SSM SecureString for per-app secrets (Telegram bot tokens, etc.).
+    // Legacy per-org (organizationId set): tightly bound to that one org's
+    // /hereya/{org}/apps/*. Multi-tenant connector (organizationId empty): the
+    // single Lambda serves every org, so it needs /dilaya/<anyOrg>/apps/* —
+    // per-org isolation is enforced in code (the SSM path is always built from
+    // the chokepoint-resolved orgId, never caller input).
     // -----------------------------------------------------------------------
 
-    const agentSecretSsmArn = `arn:aws:ssm:${this.region}:${this.account}:parameter/hereya/${organizationId}/apps/*`;
+    const agentSecretSsmArn = organizationId
+      ? `arn:aws:ssm:${this.region}:${this.account}:parameter/hereya/${organizationId}/apps/*`
+      : `arn:aws:ssm:${this.region}:${this.account}:parameter/dilaya/*/apps/*`;
 
     fn.addToRolePolicy(
       new iam.PolicyStatement({

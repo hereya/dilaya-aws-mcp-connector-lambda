@@ -46,6 +46,14 @@ describe("static public agent routes", () => {
     });
   });
 
+  it("exposes ANY /o/{orgId}/{app}/telegram/{proxy+} with NO authorizer", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "ANY /o/{orgId}/{app}/telegram/{proxy+}",
+      AuthorizationType: "NONE",
+    });
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
