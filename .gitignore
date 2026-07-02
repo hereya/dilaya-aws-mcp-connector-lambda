@@ -1,0 +1,14 @@
+node_modules/
+dist/
+cdk.out/
+*.js
+*.d.ts
+!jest.config.js
+!lib/authorizer/index.js
+!lib/frontend-authorizer/index.js
+!lib/auth-lambda/**/*.js
+!lib/cognito-triggers/**/*.js
+*.tsbuildinfo
+.DS_Store
+cdk.out/
+cdk.context.json

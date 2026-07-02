@@ -1,0 +1,7 @@
+name: dilaya/aws-mcp-connector-lambda
+version: 0.1.0
+description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway + CloudFront serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Forked from hereya/aws-mcp-app-lambda; the per-org frontend/secrets/agent infra is inert until those features are re-enabled."
+visibility: private
+iac: cdk
+infra: aws
+deploy: true
