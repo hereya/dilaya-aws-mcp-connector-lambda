@@ -374,6 +374,23 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       authorizer: httpAuthorizer,
     });
 
+    // Public agent-loop routes (NO JWT authorizer). The multi-tenant connector's
+    // dumb local poller (the `dilaya` CLI) exchanges a single-use setup token and
+    // polls "is there work?" here; auth is the poll token, verified inside the
+    // Lambda (agent-handler.ts), not a JWT. Org + app live in the PATH because
+    // these calls carry no token to read the org set from. In the legacy per-org
+    // app these routes were created dynamically by the org Lambda; here they are
+    // STATIC — one deployment serves every org — so no runtime route creation and
+    // no ApiGatewayV2 IAM on the connector role. A single catch-all covers both
+    // /agent/token (POST) and /agent/poll (GET); the handler validates the exact
+    // sub-path and 404s anything else. Invoke permission is the api-wide
+    // `HttpApiInvokeAll` grant below.
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/agent/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
