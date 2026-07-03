@@ -182,12 +182,60 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       ],
     });
 
-    // Apply same IAM policies from dependency packages (Aurora, S3, etc.)
-    for (const [, value] of Object.entries(policyEnv)) {
-      const policy = JSON.parse(value as string);
-      for (const statement of policy.Statement) {
-        appLambdaRole.addToPolicy(iam.PolicyStatement.fromJson(statement));
-      }
+    // Per-app frontend Lambdas get a STRICT ALLOWLIST — never the connector's
+    // broad dependency grants. Handing a per-app Lambda the SQLite VM family
+    // (iamPolicySqliteDataApi = all-apps DB, iamPolicySqliteRegistry = the org/app
+    // registry, iamPolicySqliteCapability = the token SIGNING SECRET) would let it
+    // reach any org's data — or forge a capability token for any (org,app) and
+    // break tenant isolation entirely. Its DB access is instead a narrow,
+    // data-routes-only execute-api grant to the VM, with its (org,app) bound
+    // per-request by the long-lived capability token in its env. (Auth/secrets
+    // grants come back, per-org-scoped, in F3.)
+    const dataApiUrl = nonPolicyEnv["dataApiUrl"];
+    if (dataApiUrl) {
+      const vmApiId = new URL(dataApiUrl).host.split(".")[0];
+      // Only the data routes — NOT /admin/* (delete-app, sync are connector-only).
+      const dataRoutes = [
+        "POST/query",
+        "POST/batch-execute",
+        "POST/tx/begin",
+        "POST/tx/commit",
+        "POST/tx/rollback",
+        "GET/stats",
+      ];
+      appLambdaRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ["execute-api:Invoke"],
+          resources: dataRoutes.map(
+            (r) => `arn:aws:execute-api:${this.region}:${this.account}:${vmApiId}/*/${r}`
+          ),
+        })
+      );
+    }
+    // Files: the per-app runtime stores/reads objects under its own org prefix.
+    // NOTE: the shared per-app role can't bake in a specific orgId, so the IAM
+    // grant is storage-prefix-wide; per-org file isolation is enforced in code
+    // (runtime/storage.ts prefixes every key with <orgId>/). True per-org S3 IAM
+    // would need per-app roles or an S3 capability — a documented v1 limitation.
+    const appBucket = nonPolicyEnv["bucketName"];
+    const appPrefix = nonPolicyEnv["s3Prefix"];
+    if (appBucket) {
+      const keyGlob = `arn:aws:s3:::${appBucket}/${appPrefix ? appPrefix + "/" : ""}*`;
+      appLambdaRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+          resources: [keyGlob],
+        })
+      );
+      appLambdaRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ["s3:ListBucket"],
+          resources: [`arn:aws:s3:::${appBucket}`],
+          conditions: appPrefix
+            ? { StringLike: { "s3:prefix": [`${appPrefix}/*`, `${appPrefix}`] } }
+            : undefined,
+        })
+      );
     }
 
     // -----------------------------------------------------------------------
@@ -661,12 +709,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       })
     );
 
-    appLambdaRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ["ssm:GetParameter"],
-        resources: [agentSecretSsmArn],
-      })
-    );
+    // NOTE(F3): per-app Lambdas intentionally get NO SSM/KMS/Cognito grants in
+    // public v1. The prior grants here were cross-tenant (ssm:GetParameter on
+    // /dilaya/*/apps/* reaches every org's secrets; the Cognito grant keyed off
+    // an empty organizationId). F3 (per-app auth + secrets) re-adds them scoped
+    // per-org via the same capability/tag discipline used for the DB.
 
     // KMS decrypt for the AWS-managed SSM key (SecureString).
     // Scoped via ViaService condition so it only works through SSM.
@@ -680,34 +727,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       },
     });
     fn.addToRolePolicy(ssmKmsDecrypt);
-    appLambdaRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ["kms:Decrypt"],
-        resources: ["*"],
-        conditions: {
-          StringEquals: {
-            "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
-          },
-        },
-      })
-    );
-
-    // Per-app Lambdas may opt in to registering users server-side via the
-    // hereya runtime's users.addUser helper. Since per-app Cognito pools are
-    // locked to AllowAdminCreateUserOnly=true, the helper calls
-    // AdminCreateUser. Scope by the HereyaOrg tag on the pool so one org's
-    // per-app Lambdas cannot create users in another org's pools.
-    appLambdaRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ["cognito-idp:AdminCreateUser"],
-        resources: ["*"],
-        conditions: {
-          StringEquals: {
-            "aws:ResourceTag/HereyaOrg": organizationId,
-          },
-        },
-      })
-    );
+    // (appLambdaRole KMS + Cognito grants removed — see NOTE(F3) above.)
 
     // -----------------------------------------------------------------------
     // Org Lambda: environment variables for per-app Lambda management
