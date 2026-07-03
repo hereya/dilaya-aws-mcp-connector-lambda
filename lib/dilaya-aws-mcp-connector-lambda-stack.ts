@@ -471,13 +471,26 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
     // These are created at CDK time. Their IDs are passed to the org Lambda
     // so it can create per-app API Gateway routes dynamically.
+    //
+    // Un-guarded (F3): per-app Cognito pools are created at RUNTIME by enable-auth,
+    // so there is NO deploy-time pool to gate on — the shared frontend authorizer +
+    // auth Lambda are created UNCONDITIONALLY. Each resolves the per-app pool from
+    // the request PATH → registry (name#<app>) → the app's `_auth_config` row
+    // (SQLite, via the VM Data API). Both MINT their own capability token; they are
+    // trusted deploy-package infra, not agent code. `frontendAuthorizerId` /
+    // `authIntegrationId` are exported to the connector `fn` env for F3a route
+    // plumbing (setSiteRoutesAuth / ensureAuthRoute).
 
     let frontendAuthorizerId: string | undefined;
     let authIntegrationId: string | undefined;
+    // Outer-scope ref so the APP_STATE_TABLE grant (for the per-app agent-session
+    // secret) can be attached after that table is created further down.
+    let frontendAuthorizerRef: lambda.Function | undefined;
 
-    if (cognitoUserPoolId && cognitoClientId) {
-      // Frontend Authorizer Lambda (multi-tenant: per-app pool lookup via DB,
-      // with shared-pool fallback for Phase-A migration).
+    {
+      // Frontend Authorizer Lambda (multi-tenant: per-app pool lookup via the
+      // registry + the app's SQLite `_auth_config`; validates the Cognito ID-token
+      // cookie against that pool's JWKS, plus the `dilaya_agent` HMAC session).
       const frontendAuthorizerFn = new lambda.Function(
         this,
         "FrontendAuthorizerHandler",
@@ -490,17 +503,19 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           memorySize: 128,
           timeout: cdk.Duration.seconds(10),
           environment: {
-            COGNITO_USER_POOL_ID: cognitoUserPoolId,
+            awsRegion: this.region,
             COGNITO_REGION: cognitoRegion,
-            clusterArn: plainEnv["clusterArn"] ?? "",
-            secretArn: plainEnv["secretArn"] ?? "",
-            databaseName: plainEnv["databaseName"] ?? "",
+            dataApiUrl: plainEnv["dataApiUrl"] ?? "",
+            registryTableName: plainEnv["registryTableName"] ?? "",
+            capabilitySecretArn: plainEnv["capabilitySecretArn"] ?? "",
           },
         }
       );
+      frontendAuthorizerRef = frontendAuthorizerFn;
 
-      // Apply Aurora Data API policies from dep packages so the authorizer can
-      // SELECT from public._app_auth.
+      // Apply the SQLite-data package IAM (Data API execute-api + registry
+      // GetItem + capability-secret GetSecretValue) + S3 read so the authorizer
+      // can resolve the app, read `_auth_config`, and mint capability tokens.
       for (const [, value] of Object.entries(policyEnv)) {
         const policy = JSON.parse(value as string);
         for (const statement of policy.Statement) {
@@ -533,43 +548,32 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       );
       frontendAuthorizerId = frontendAuthorizerCfn.ref;
 
-      // Auth Lambda (login/OTP/verify/logout). Multi-tenant: extracts app from
-      // path, looks up per-app pool client + Postmark token, falls back to the
-      // shared org pool for unmigrated apps.
-      const authLambdaEnv: Record<string, string> = {
-        COGNITO_USER_POOL_ID: cognitoUserPoolId,
-        COGNITO_CLIENT_ID: cognitoClientId,
-        COGNITO_REGION: cognitoRegion,
-        CUSTOM_DOMAIN: customDomain ?? "",
-        BUCKET_NAME: plainEnv["bucketName"] ?? "",
-        S3_PREFIX: plainEnv["s3Prefix"] ?? "",
-        ORGANIZATION_ID: organizationId,
-        clusterArn: plainEnv["clusterArn"] ?? "",
-        secretArn: plainEnv["secretArn"] ?? "",
-        databaseName: plainEnv["databaseName"] ?? "",
-      };
-
+      // Auth Lambda (login / send-otp / verify / logout). Multi-tenant: extracts
+      // orgId + app from the path (`/o/{orgId}/{app}/auth/...`), resolves the app
+      // via the registry, reads the per-app pool client + from_email from the
+      // app's SQLite `_auth_config`, the allowlist from `_user_access`, and the
+      // Postmark server token from SSM `/dilaya/<orgId>/apps/<app>/auth/...`.
       const authLambdaFn = new lambda.Function(this, "AuthLambdaHandler", {
         runtime: lambda.Runtime.NODEJS_22_X,
         handler: "index.handler",
         code: lambda.Code.fromAsset(path.join(__dirname, "auth-lambda")),
         memorySize: 128,
         timeout: cdk.Duration.seconds(15),
-        environment: authLambdaEnv,
+        environment: {
+          awsRegion: this.region,
+          COGNITO_REGION: cognitoRegion,
+          dataApiUrl: plainEnv["dataApiUrl"] ?? "",
+          registryTableName: plainEnv["registryTableName"] ?? "",
+          capabilitySecretArn: plainEnv["capabilitySecretArn"] ?? "",
+          customDomain: customDomain ?? "",
+          bucketName: plainEnv["bucketName"] ?? "",
+          s3Prefix: plainEnv["s3Prefix"] ?? "",
+        },
       });
 
-      // Grant Auth Lambda access to secrets
-      const authSecretKeys: string[] = [];
-      for (const { key, secret, secretName } of secretEnvEntries) {
-        authLambdaFn.addEnvironment(key, secretName);
-        secret.grantRead(authLambdaFn);
-        authSecretKeys.push(key);
-      }
-      if (authSecretKeys.length > 0) {
-        authLambdaFn.addEnvironment("SECRET_KEYS", authSecretKeys.join(","));
-      }
-
-      // Grant Auth Lambda Cognito permissions + Data API (to read _app_auth).
+      // Apply the SQLite-data package IAM (Data API + registry + capability
+      // secret) + S3 read so the auth Lambda can resolve the app, read
+      // `_auth_config`/`_user_access`, and mint capability tokens.
       for (const [, value] of Object.entries(policyEnv)) {
         const policy = JSON.parse(value as string);
         for (const statement of policy.Statement) {
@@ -577,12 +581,17 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         }
       }
 
-      // Read per-app Postmark server token from SSM SecureString.
-      const appAuthSsmArn = `arn:aws:ssm:${this.region}:${this.account}:parameter/hereya/${organizationId}/apps/*`;
+      // Read per-app Postmark server tokens from SSM SecureString. Multi-tenant:
+      // one auth Lambda serves every org, so it needs /dilaya/<anyOrg>/apps/* —
+      // per-org isolation is enforced in code (the SSM path is always built from
+      // the path-derived orgId, never caller input). Mirrors the connector fn's
+      // agent/telegram SSM grant.
       authLambdaFn.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ["ssm:GetParameter"],
-          resources: [appAuthSsmArn],
+          resources: [
+            `arn:aws:ssm:${this.region}:${this.account}:parameter/dilaya/*/apps/*`,
+          ],
         })
       );
       authLambdaFn.addToRolePolicy(
@@ -744,6 +753,8 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     fn.addEnvironment("AGENT_SECRET_SSM_PREFIX", `/hereya/${organizationId}/apps`);
     fn.addEnvironment("COGNITO_TRIGGER_LAMBDA_ARNS", triggerArns.join(","));
     fn.addEnvironment("awsRegion", this.region);
+    // Cognito region for enable-auth (app-auth.ts reads COGNITO_REGION ?? awsRegion).
+    fn.addEnvironment("COGNITO_REGION", cognitoRegion);
 
     if (frontendAuthorizerId) {
       fn.addEnvironment("FRONTEND_AUTHORIZER_ID", frontendAuthorizerId);
@@ -765,6 +776,17 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     });
     fn.addEnvironment("APP_STATE_TABLE", appStateTable.tableName);
     appStateTable.grantReadWriteData(fn);
+
+    // The frontend authorizer reads the per-app agent-session HMAC secret
+    // (`appsecret#<orgId>#<app>`, written by the connector's ensureAppSecret) to
+    // validate the `dilaya_agent` browser-testing session cookie. Read-only.
+    if (frontendAuthorizerRef) {
+      frontendAuthorizerRef.addEnvironment(
+        "APP_STATE_TABLE",
+        appStateTable.tableName
+      );
+      appStateTable.grantReadData(frontendAuthorizerRef);
+    }
 
     // -----------------------------------------------------------------------
     // Org Lambda: per-app auth provisioning permissions (enable-auth tool).
@@ -788,9 +810,19 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           "cognito-idp:UpdateUserPoolClient",
           "cognito-idp:DescribeUserPoolClient",
           "cognito-idp:AdminCreateUser",
+          // AdminDeleteUser: remove-user-access tool + runtime users helper.
+          "cognito-idp:AdminDeleteUser",
           "cognito-idp:ListUsers",
           "cognito-idp:TagResource",
+          // SetUserPoolMfaConfig: reserved for the passwordless-OTP MFA config
+          // path (CreateUserPool sets MfaConfiguration OFF inline today; kept so
+          // a future enable-auth MFA tweak doesn't need a redeploy).
+          "cognito-idp:SetUserPoolMfaConfig",
         ],
+        // Multi-tenant: per-app pools are created at RUNTIME for every org, each
+        // TAGGED HereyaOrg/HereyaApp, so there is no single org value to scope to
+        // (organizationId is empty). resource="*"; per-org isolation is enforced
+        // in code (app-auth.ts tags every pool with the chokepoint-resolved orgId).
         resources: ["*"],
       })
     );

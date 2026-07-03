@@ -1,5 +1,5 @@
 import * as cdk from "aws-cdk-lib/core";
-import { Template } from "aws-cdk-lib/assertions";
+import { Template, Match } from "aws-cdk-lib/assertions";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -70,5 +70,76 @@ describe("static public agent routes", () => {
     const [route] = Object.values(routes);
     expect(route).toBeDefined();
     expect((route as any).Properties.AuthorizerId).toBeUndefined();
+  });
+});
+
+// F3: the per-app frontend authorizer + auth Lambda are created UNCONDITIONALLY
+// (per-app Cognito pools are runtime; there is no deploy-time pool to gate on).
+// This locks the guarded→unconditional change: the minimal env below has NO
+// Cognito user pool / client, yet both must still exist and be exported to the
+// connector Lambda for F3a route plumbing.
+describe("F3 per-app auth infra (unconditional)", () => {
+  let tmpRoot: string;
+  const saved = { ...process.env };
+
+  beforeAll(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "connector-f3-"));
+    fs.mkdirSync(path.join(tmpRoot, "dist"), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, "dist", "handler.js"), "exports.handler=async()=>({});");
+    process.env.hereyaProjectRootDir = tmpRoot;
+    process.env.oauthServerUrl = "https://dilaya.eu/oauth/connect";
+    process.env.hereyaProjectEnv = "{}"; // no Cognito, no dataApiUrl
+    delete process.env.customDomain;
+    delete process.env.organizationId;
+  });
+
+  afterAll(() => {
+    process.env = saved;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function template(): Template {
+    const app = new cdk.App();
+    const stack = new DilayaConnectorLambdaStack(app, "F3Stack", {
+      env: { account: "123456789012", region: "eu-west-1" },
+    });
+    return Template.fromStack(stack);
+  }
+
+  it("creates the REQUEST frontend authorizer with no deploy-time Cognito", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
+      Name: "FrontendAuthorizerV2",
+      AuthorizerType: "REQUEST",
+    });
+  });
+
+  it("exports FRONTEND_AUTHORIZER_ID + AUTH_INTEGRATION_ID to the connector Lambda", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      Environment: {
+        Variables: Match.objectLike({
+          FRONTEND_AUTHORIZER_ID: Match.anyValue(),
+          AUTH_INTEGRATION_ID: Match.anyValue(),
+        }),
+      },
+    });
+  });
+
+  it("grants the connector Lambda tag-agnostic Cognito admin incl. AdminDeleteUser", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith([
+              "cognito-idp:CreateUserPool",
+              "cognito-idp:AdminCreateUser",
+              "cognito-idp:AdminDeleteUser",
+            ]),
+          }),
+        ]),
+      },
+    });
   });
 });
