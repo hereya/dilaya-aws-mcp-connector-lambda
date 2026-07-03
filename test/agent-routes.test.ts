@@ -54,6 +54,14 @@ describe("static public agent routes", () => {
     });
   });
 
+  it("exposes ANY /o/{orgId}/{app}/secrets/{proxy+} with NO authorizer", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "ANY /o/{orgId}/{app}/secrets/{proxy+}",
+      AuthorizationType: "NONE",
+    });
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -70,6 +78,32 @@ describe("static public agent routes", () => {
     const [route] = Object.values(routes);
     expect(route).toBeDefined();
     expect((route as any).Properties.AuthorizerId).toBeUndefined();
+  });
+
+  it("the secrets route carries no AuthorizerId at all", () => {
+    const t = template();
+    const routes = t.findResources("AWS::ApiGatewayV2::Route", {
+      Properties: { RouteKey: "ANY /o/{orgId}/{app}/secrets/{proxy+}" },
+    });
+    const [route] = Object.values(routes);
+    expect(route).toBeDefined();
+    expect((route as any).Properties.AuthorizerId).toBeUndefined();
+  });
+
+  it("grants the connector Lambda ssm:PutParameter + ssm:DeleteParameter covering /secrets/* writes", () => {
+    const t = template();
+    // The connector role writes+deletes the secret VALUE under /dilaya/*/apps/*
+    // (which subsumes /secrets/<name>); the per-app role only READS /secrets/*.
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(["ssm:PutParameter", "ssm:DeleteParameter"]),
+            Resource: Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*"),
+          }),
+        ]),
+      },
+    });
   });
 });
 
@@ -194,6 +228,34 @@ describe("per-app IAM roles (app-level isolation)", () => {
     const json = JSON.stringify(t.toJSON());
     expect(json).not.toContain("/admin/delete-app");
     expect(json).not.toContain("POST/admin");
+  });
+
+  it("caps per-app SSM to own-app mail/secrets params (+ KMS decrypt via SSM only)", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::ManagedPolicy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: "ssm:GetParameter",
+            Resource: Match.arrayWith([
+              Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*/mail/\\*"),
+              Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*/secrets/\\*"),
+            ]),
+          }),
+          Match.objectLike({
+            Action: "kms:Decrypt",
+            Resource: "*",
+            Condition: {
+              StringEquals: { "kms:ViaService": Match.stringLikeRegexp("ssm\\..*\\.amazonaws\\.com") },
+            },
+          }),
+        ]),
+      },
+    });
+    // the mail/secrets ceiling must NOT open agent or telegram SSM paths
+    const json = JSON.stringify(t.toJSON());
+    expect(json).not.toContain("apps/*/telegram/*");
+    expect(json).not.toContain("apps/*/agent");
   });
 
   it("lets the connector CreateRole ONLY under /dilaya-app/ AND only with the boundary attached", () => {

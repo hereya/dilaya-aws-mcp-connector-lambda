@@ -226,8 +226,32 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         })
       );
     }
+    // Mail (now) + integration secrets (next milestone): a per-app frontend
+    // handler can read its OWN app's Postmark server token / integration secrets
+    // from SSM SecureString. CEILING = any org/app's `/mail/*` + `/secrets/*`
+    // params; each per-app role's inline policy (src/app-lambda.ts
+    // appRolePolicyDocument) narrows this to /dilaya/<orgId>/apps/<app>/{mail,secrets}/*.
+    // No other SSM paths (never the agent/telegram/viewer-cert params).
+    boundaryStatements.push(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParameter"],
+        resources: [
+          `arn:aws:ssm:${this.region}:${this.account}:parameter/dilaya/*/apps/*/mail/*`,
+          `arn:aws:ssm:${this.region}:${this.account}:parameter/dilaya/*/apps/*/secrets/*`,
+        ],
+      }),
+      // Decrypt the SecureString value — usable ONLY through SSM (kms:ViaService),
+      // same pattern as the connector fn's own ssmKmsDecrypt grant.
+      new iam.PolicyStatement({
+        actions: ["kms:Decrypt"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: { "kms:ViaService": `ssm.${this.region}.amazonaws.com` },
+        },
+      })
+    );
     const appLambdaBoundary = new iam.ManagedPolicy(this, "AppLambdaBoundary", {
-      description: "Permissions ceiling for per-app frontend Lambda roles (logs + VM data routes + files bucket).",
+      description: "Permissions ceiling for per-app frontend Lambda roles (logs + VM data routes + files bucket + own-app mail/secrets SSM).",
       statements: boundaryStatements,
     });
 
@@ -442,6 +466,20 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // HttpApiInvokeAll grant below.
     httpApi.addRoutes({
       path: "/o/{orgId}/{app}/telegram/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
+    // Public integration-secret route (NO JWT authorizer). The USER opens
+    // /o/{orgId}/{app}/secrets/setup (a signed single-use link) to enter a
+    // 3rd-party API key out of band; the connector Lambda writes it straight to
+    // SSM SecureString (never into MCP). Org + app live in the PATH; STATIC (one
+    // deployment serves every org) — no runtime route creation. Handler validates
+    // the exact sub-path. Invoke permission is the api-wide HttpApiInvokeAll grant
+    // below; the connector role's existing /dilaya/*/apps/* SSM Put/Delete grant
+    // covers the /secrets/<name> write path (no IAM delta needed).
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/secrets/{proxy+}",
       methods: [apigwv2.HttpMethod.ANY],
       integration: lambdaIntegration,
     });
