@@ -168,75 +168,61 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     }
 
     // -----------------------------------------------------------------------
-    // Shared IAM Role for per-app Lambdas
+    // Per-app Lambda roles — created at RUNTIME, one per (org,app), by the
+    // connector (src/app-lambda.ts createAppRole). This replaces the old single
+    // shared role, which physically couldn't bake in a specific orgId, so its
+    // S3 grant had to be storage-prefix-wide (a cross-tenant file gap). Now each
+    // per-app Lambda gets its OWN role whose inline policy is scoped to
+    // <orgId>/<app>/*. Two guardrails keep runtime role-creation safe:
+    //   1. the connector may only CreateRole under `appRolePath`, and only if it
+    //      attaches the PERMISSIONS BOUNDARY below (see the fn IAM grants);
+    //   2. the boundary is the hard ceiling for ANY per-app role — even a bug in
+    //      the inline policy can't exceed "logs + VM data routes + files-bucket
+    //      S3": no IAM, no VM /admin/*, no other buckets, no Cognito, no secrets.
     // -----------------------------------------------------------------------
 
-    const appLambdaRole = new iam.Role(this, "AppLambdaRole", {
-      assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
-      managedPolicies: [
-        iam.ManagedPolicy.fromManagedPolicyArn(
-          this,
-          "AppLambdaBasicExec",
-          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-        ),
-      ],
-    });
+    const appRolePath = "/dilaya-app/";
+    const vmApiId = nonPolicyEnv["dataApiUrl"]
+      ? new URL(nonPolicyEnv["dataApiUrl"]).host.split(".")[0]
+      : undefined;
+    const appBucket = nonPolicyEnv["bucketName"];
+    const appPrefix = nonPolicyEnv["s3Prefix"];
 
-    // Per-app frontend Lambdas get a STRICT ALLOWLIST — never the connector's
-    // broad dependency grants. Handing a per-app Lambda the SQLite VM family
-    // (iamPolicySqliteDataApi = all-apps DB, iamPolicySqliteRegistry = the org/app
-    // registry, iamPolicySqliteCapability = the token SIGNING SECRET) would let it
-    // reach any org's data — or forge a capability token for any (org,app) and
-    // break tenant isolation entirely. Its DB access is instead a narrow,
-    // data-routes-only execute-api grant to the VM, with its (org,app) bound
-    // per-request by the long-lived capability token in its env. (Auth/secrets
-    // grants come back, per-org-scoped, in F3.)
-    const dataApiUrl = nonPolicyEnv["dataApiUrl"];
-    if (dataApiUrl) {
-      const vmApiId = new URL(dataApiUrl).host.split(".")[0];
-      // Only the data routes — NOT /admin/* (delete-app, sync are connector-only).
-      const dataRoutes = [
-        "POST/query",
-        "POST/batch-execute",
-        "POST/tx/begin",
-        "POST/tx/commit",
-        "POST/tx/rollback",
-        "GET/stats",
-      ];
-      appLambdaRole.addToPolicy(
+    const boundaryStatements: iam.PolicyStatement[] = [
+      new iam.PolicyStatement({
+        actions: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+        resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:/aws/lambda/${appLambdaNamePrefix}*`],
+      }),
+    ];
+    if (vmApiId) {
+      // Data routes only — NEVER /admin/* (delete-app, sync are connector-only).
+      boundaryStatements.push(
         new iam.PolicyStatement({
           actions: ["execute-api:Invoke"],
-          resources: dataRoutes.map(
+          resources: ["POST/query", "POST/batch-execute", "POST/tx/begin", "POST/tx/commit", "POST/tx/rollback", "GET/stats"].map(
             (r) => `arn:aws:execute-api:${this.region}:${this.account}:${vmApiId}/*/${r}`
           ),
         })
       );
     }
-    // Files: the per-app runtime stores/reads objects under its own org prefix.
-    // NOTE: the shared per-app role can't bake in a specific orgId, so the IAM
-    // grant is storage-prefix-wide; per-org file isolation is enforced in code
-    // (runtime/storage.ts prefixes every key with <orgId>/). True per-org S3 IAM
-    // would need per-app roles or an S3 capability — a documented v1 limitation.
-    const appBucket = nonPolicyEnv["bucketName"];
-    const appPrefix = nonPolicyEnv["s3Prefix"];
     if (appBucket) {
-      const keyGlob = `arn:aws:s3:::${appBucket}/${appPrefix ? appPrefix + "/" : ""}*`;
-      appLambdaRole.addToPolicy(
+      // Ceiling = the whole files bucket/prefix; each per-app role's inline
+      // policy narrows this to its own <orgId>/<app>/*.
+      boundaryStatements.push(
         new iam.PolicyStatement({
           actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [keyGlob],
-        })
-      );
-      appLambdaRole.addToPolicy(
+          resources: [`arn:aws:s3:::${appBucket}/${appPrefix ? appPrefix + "/" : ""}*`],
+        }),
         new iam.PolicyStatement({
           actions: ["s3:ListBucket"],
           resources: [`arn:aws:s3:::${appBucket}`],
-          conditions: appPrefix
-            ? { StringLike: { "s3:prefix": [`${appPrefix}/*`, `${appPrefix}`] } }
-            : undefined,
         })
       );
     }
+    const appLambdaBoundary = new iam.ManagedPolicy(this, "AppLambdaBoundary", {
+      description: "Permissions ceiling for per-app frontend Lambda roles (logs + VM data routes + files bucket).",
+      statements: boundaryStatements,
+    });
 
     // -----------------------------------------------------------------------
     // Lambda Layer for per-app runtime utilities
@@ -685,11 +671,29 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       })
     );
 
-    // Pass shared role to per-app Lambdas
+    // Per-app role management. The connector creates/tears down one IAM role per
+    // (org,app) — but ONLY under `appRolePath`, and CreateRole is CONDITIONED on
+    // attaching the permissions boundary, so it can never mint an unbounded or
+    // out-of-path role (no privilege escalation from this grant).
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["iam:CreateRole"],
+        resources: [`arn:aws:iam::${this.account}:role${appRolePath}*`],
+        conditions: { StringEquals: { "iam:PermissionsBoundary": appLambdaBoundary.managedPolicyArn } },
+      })
+    );
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["iam:TagRole", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:DeleteRole", "iam:GetRole"],
+        resources: [`arn:aws:iam::${this.account}:role${appRolePath}*`],
+      })
+    );
+    // Pass a per-app role to Lambda only (never to any other service/principal).
     fn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["iam:PassRole"],
-        resources: [appLambdaRole.roleArn],
+        resources: [`arn:aws:iam::${this.account}:role${appRolePath}*`],
+        conditions: { StringEquals: { "iam:PassedToService": "lambda.amazonaws.com" } },
       })
     );
 
@@ -736,13 +740,15 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       },
     });
     fn.addToRolePolicy(ssmKmsDecrypt);
-    // (appLambdaRole KMS + Cognito grants removed — see NOTE(F3) above.)
+    // (per-app Lambda SSM/KMS/Cognito grants removed — see NOTE(F3) above; each
+    //  per-app role is created at runtime by the connector, capped by the boundary.)
 
     // -----------------------------------------------------------------------
     // Org Lambda: environment variables for per-app Lambda management
     // -----------------------------------------------------------------------
 
-    fn.addEnvironment("APP_LAMBDA_ROLE_ARN", appLambdaRole.roleArn);
+    fn.addEnvironment("APP_LAMBDA_ROLE_PATH", appRolePath);
+    fn.addEnvironment("APP_LAMBDA_PERMISSIONS_BOUNDARY_ARN", appLambdaBoundary.managedPolicyArn);
     fn.addEnvironment("APP_LAMBDA_NAME_PREFIX", appLambdaNamePrefix);
     if (runtimeLayer) {
       fn.addEnvironment("APP_LAMBDA_LAYER_ARN", runtimeLayer.layerVersionArn);

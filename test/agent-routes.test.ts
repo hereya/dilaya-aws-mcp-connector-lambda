@@ -143,3 +143,99 @@ describe("F3 per-app auth infra (unconditional)", () => {
     });
   });
 });
+
+describe("per-app IAM roles (app-level isolation)", () => {
+  let tmpRoot: string;
+  const saved = { ...process.env };
+
+  beforeAll(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "connector-f4-"));
+    fs.mkdirSync(path.join(tmpRoot, "dist"), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, "dist", "handler.js"), "exports.handler=async()=>({});");
+    process.env.hereyaProjectRootDir = tmpRoot;
+    process.env.oauthServerUrl = "https://dilaya.eu/oauth/connect";
+    process.env.hereyaProjectEnv = JSON.stringify({
+      dataApiUrl: "https://abc123.execute-api.eu-west-1.amazonaws.com",
+      bucketName: "files-bkt",
+      s3Prefix: "dep",
+      awsRegion: "eu-west-1",
+    });
+    delete process.env.customDomain;
+    delete process.env.organizationId;
+  });
+
+  afterAll(() => {
+    process.env = saved;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function template(): Template {
+    const app = new cdk.App();
+    const stack = new DilayaConnectorLambdaStack(app, "F4Stack", {
+      env: { account: "123456789012", region: "eu-west-1" },
+    });
+    return Template.fromStack(stack);
+  }
+
+  it("ships a permissions boundary capped to VM DATA routes + files-bucket S3 (no /admin/*, no IAM)", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::ManagedPolicy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: "execute-api:Invoke",
+            Resource: Match.arrayWith([Match.stringLikeRegexp("abc123/\\*/POST/query")]),
+          }),
+          Match.objectLike({ Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"] }),
+        ]),
+      },
+    });
+    // the ceiling must NOT reach the VM admin routes
+    const json = JSON.stringify(t.toJSON());
+    expect(json).not.toContain("/admin/delete-app");
+    expect(json).not.toContain("POST/admin");
+  });
+
+  it("lets the connector CreateRole ONLY under /dilaya-app/ AND only with the boundary attached", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: "iam:CreateRole",
+            Resource: Match.stringLikeRegexp("role/dilaya-app/\\*"),
+            Condition: { StringEquals: Match.objectLike({ "iam:PermissionsBoundary": Match.anyValue() }) },
+          }),
+        ]),
+      },
+    });
+  });
+
+  it("passes per-app roles to Lambda only", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: "iam:PassRole",
+            Condition: { StringEquals: { "iam:PassedToService": "lambda.amazonaws.com" } },
+          }),
+        ]),
+      },
+    });
+  });
+
+  it("wires the boundary ARN + role path to the connector and drops APP_LAMBDA_ROLE_ARN", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      Environment: {
+        Variables: Match.objectLike({
+          APP_LAMBDA_ROLE_PATH: "/dilaya-app/",
+          APP_LAMBDA_PERMISSIONS_BOUNDARY_ARN: Match.anyValue(),
+        }),
+      },
+    });
+    const json = JSON.stringify(t.toJSON());
+    expect(json).not.toContain("APP_LAMBDA_ROLE_ARN");
+  });
+});
