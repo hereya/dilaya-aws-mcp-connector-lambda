@@ -109,6 +109,13 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         return { key, secret, secretName };
       });
 
+    // The capability signing secret arrives as a secret:// value (hereya resolves
+    // the VM's capabilitySecretArn output to its value), so it's in secretEnvEntries,
+    // NOT plainEnv. The per-app auth Lambdas (frontend-authorizer + auth-lambda)
+    // MINT capability tokens, so they must read it — pass its secret name + grantRead.
+    const capSecretEntry = secretEnvEntries.find((e) => e.key === "capabilitySecretArn");
+    const capSecretName = capSecretEntry?.secretName ?? "";
+
     const plainEnv: Record<string, string> = Object.fromEntries(
       Object.entries(nonPolicyEnv).filter(
         ([, value]) => !(value as string).startsWith("secret://")
@@ -493,7 +500,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             COGNITO_REGION: cognitoRegion,
             dataApiUrl: plainEnv["dataApiUrl"] ?? "",
             registryTableName: plainEnv["registryTableName"] ?? "",
-            capabilitySecretArn: plainEnv["capabilitySecretArn"] ?? "",
+            capabilitySecretArn: capSecretName,
           },
         }
       );
@@ -510,6 +517,8 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           );
         }
       }
+      // Read the capability signing secret so the authorizer can mint tokens.
+      if (capSecretEntry) capSecretEntry.secret.grantRead(frontendAuthorizerFn);
 
       // Grant API Gateway permission to invoke the frontend authorizer
       frontendAuthorizerFn.addPermission("ApiGwAuthorizerInvoke", {
@@ -550,7 +559,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           COGNITO_REGION: cognitoRegion,
           dataApiUrl: plainEnv["dataApiUrl"] ?? "",
           registryTableName: plainEnv["registryTableName"] ?? "",
-          capabilitySecretArn: plainEnv["capabilitySecretArn"] ?? "",
+          capabilitySecretArn: capSecretName,
           customDomain: customDomain ?? "",
           bucketName: plainEnv["bucketName"] ?? "",
           s3Prefix: plainEnv["s3Prefix"] ?? "",
@@ -566,6 +575,8 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           authLambdaFn.addToRolePolicy(iam.PolicyStatement.fromJson(statement));
         }
       }
+      // Read the capability signing secret so the auth Lambda can mint tokens.
+      if (capSecretEntry) capSecretEntry.secret.grantRead(authLambdaFn);
 
       // Read per-app Postmark server tokens from SSM SecureString. Multi-tenant:
       // one auth Lambda serves every org, so it needs /dilaya/<anyOrg>/apps/* —
