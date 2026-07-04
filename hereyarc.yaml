@@ -1,7 +1,22 @@
 name: dilaya/aws-mcp-connector-lambda
-version: 0.1.7
-description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway + CloudFront serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Also serves the static, no-authorizer agent-loop, Telegram, and integration-secret setup routes (/o/{orgId}/{app}/{agent,telegram,secrets}/{proxy+}); SSM secret access is multi-tenant (/dilaya/*/apps/*), isolation enforced in code. The per-app Lambda permissions boundary additionally allows own-app mail/secrets SSM reads (/dilaya/*/apps/*/{mail,secrets}/*) + KMS-via-SSM decrypt. Forked from hereya/aws-mcp-app-lambda; the per-org frontend infra is inert until re-enabled."
+version: 0.1.8
+description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Also serves the static, no-authorizer agent-loop, Telegram, and integration-secret setup routes (/o/{orgId}/{app}/{agent,telegram,secrets}/{proxy+}); SSM secret access is multi-tenant (/dilaya/*/apps/*), isolation enforced in code. The per-app Lambda permissions boundary additionally allows own-app mail/secrets SSM reads (/dilaya/*/apps/*/{mail,secrets}/*) + KMS-via-SSM decrypt. When appContentDomain is set, provisions the app-content-domain edge layer: a CloudFront distribution (*.appContentDomain, wildcard cert + DNS) with a viewer-request Function that host-routes flat vanity hosts <app>--<orgslug>.appContentDomain to the per-app site/auth routes (tagging x-dilaya-app-host), plus auth-lambda vanity-host cookie/redirect awareness — inert without appContentDomain. Forked from hereya/aws-mcp-app-lambda."
 visibility: private
 iac: cdk
 infra: aws
 deploy: true
+parameters:
+  # App-content domain (host-routing, FLAT scheme). All THREE are optional and
+  # only meaningful together: set them to serve per-app frontends at the flat
+  # vanity host <app>--<orgslug>.<appContentDomain> IN ADDITION to the path URL.
+  # Absent → the host-routing feature is fully inert (no CloudFront function /
+  # distribution / DNS, no APP_CONTENT_* env, no cloudfront:* IAM).
+  appContentDomain:
+    description: "App-content domain that fronts per-app frontends at <app>--<orgslug>.<appContentDomain> (e.g. dilaya-apps.eu). Absent → host-routing feature off."
+    mandatory: false
+  appContentZoneId:
+    description: "Route53 hosted-zone id for appContentDomain. Required when appContentDomain is set."
+    mandatory: false
+  appContentCertArn:
+    description: "us-east-1 ACM ARN of the pre-created *.<appContentDomain> wildcard certificate (passed in, NOT created by CDK). Required when appContentDomain is set."
+    mandatory: false

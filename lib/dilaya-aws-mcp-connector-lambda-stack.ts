@@ -51,6 +51,22 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       process.env["customDomainZone"] ?? extractDomainZone(customDomain);
     const wildcardCertificateArn = process.env["wildcardCertificateArn"];
 
+    // -----------------------------------------------------------------------
+    // App-content domain (host-routing, FLAT scheme). OPTIONAL and additive:
+    // absent → this whole feature is inert and existing behaviour is
+    // byte-identical. When set, we stand up a dedicated CloudFront distribution
+    // that serves per-app frontends at the flat vanity host
+    //   <app>--<orgslug>.<appContentDomain>   (e.g. smartcal--novopattern.dilaya-apps.eu)
+    // IN ADDITION to the existing path URL https://<customDomain>/o/<org>/<app>/site/.
+    //   - appContentDomain   e.g. `dilaya-apps.eu`
+    //   - appContentZoneId   the Route53 hosted-zone id for appContentDomain
+    //   - appContentCertArn  the us-east-1 ARN of the pre-created `*.<appContentDomain>`
+    //                        cert (passed in — NOT created by CDK)
+    // -----------------------------------------------------------------------
+    const appContentDomain = process.env["appContentDomain"];
+    const appContentZoneId = process.env["appContentZoneId"];
+    const appContentCertArn = process.env["appContentCertArn"];
+
     // RFC 8707 audience binding: the connector's own /mcp resource URL. Derived
     // from customDomain so it can't be dropped (Hereya only forwards hereyavars
     // backed by a declared app parameter, and a free-form `expectedAudience`
@@ -74,6 +90,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       "Accept-Language",
       "x-forwarded-host",
       "X-Telegram-Bot-Api-Secret-Token",
+      // The app-content edge (CloudFront Function) tags the viewer's vanity host
+      // in `x-dilaya-app-host`; the origin (auth Lambda / per-app frontend) reads
+      // it to scope cookies + emit app-relative redirects. Only added when the
+      // host-routing feature is enabled so the feature-off output is unchanged.
+      ...(appContentDomain ? ["x-dilaya-app-host"] : []),
       ...additionalForwardedHeaders,
     ].filter((h, i, a) => a.findIndex((x) => x.toLowerCase() === h.toLowerCase()) === i);
 
@@ -948,6 +969,173 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           )
         ),
       });
+
+      // -------------------------------------------------------------------
+      // App-content domain: host-routing (FLAT scheme) — additive vanity host.
+      //
+      // A dedicated CloudFront distribution (alt name `*.<appContentDomain>`,
+      // wildcard viewer cert) fronts the SAME API-Gateway custom-domain origin
+      // (`customDomain`, e.g. app.dilaya.eu) that the path URL already uses — the
+      // origin Host stays `customDomain` so API-GW domain/routing still matches.
+      // A CloudFront FUNCTION (viewer-request) holds a BAKED host->{org,app} map
+      // and rewrites the URI to the existing per-app site/auth routes
+      // (/o/<org>/<app>/{site|auth}/…), tagging the viewer host in the
+      // `x-dilaya-app-host` header. The connector regenerates the map at runtime
+      // via UpdateFunction/PublishFunction — ONLY the `var HOSTMAP = {};` object
+      // literal is swapped, so keep the surrounding source byte-stable. The cert
+      // + wildcard DNS are static (one label under the domain) and never change
+      // as apps/orgs are added. Entire feature is gated on `appContentDomain`.
+      // -------------------------------------------------------------------
+
+      if (appContentDomain) {
+        if (!appContentCertArn) {
+          throw new Error(
+            "appContentCertArn is required when appContentDomain is set"
+          );
+        }
+        if (!appContentZoneId) {
+          throw new Error(
+            "appContentZoneId is required when appContentDomain is set"
+          );
+        }
+
+        // Pre-created us-east-1 wildcard cert (passed in, NOT created by CDK).
+        const appContentCertificate = acm.Certificate.fromCertificateArn(
+          this,
+          "AppContentCertificate",
+          appContentCertArn
+        );
+
+        // Attribute import (no context lookup) — the zone for appContentDomain.
+        const appContentZone = route53.HostedZone.fromHostedZoneAttributes(
+          this,
+          "AppContentZone",
+          { hostedZoneId: appContentZoneId, zoneName: appContentDomain }
+        );
+
+        // Viewer-request CloudFront Function. This is the BOOTSTRAP version with
+        // an EMPTY host map (`var HOSTMAP = {};`). The connector rewrites just
+        // that object literal at runtime (DescribeFunction -> UpdateFunction ->
+        // PublishFunction), keeping every other byte identical. The executable
+        // body matches the build contract exactly.
+        const appHostRouterFn = new cloudfront.Function(this, "AppHostRouter", {
+          functionName: `${appLambdaNamePrefix}apphost-router`,
+          code: cloudfront.FunctionCode.fromInline(`function handler(event) {
+  var request = event.request;
+  var host = request.headers.host.value.toLowerCase();
+  var HOSTMAP = {};
+  var e = HOSTMAP[host];
+  if (!e) return request;                 // unknown host -> passthrough -> origin 404
+  var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
+  // auth routes live at /o/<org>/<app>/auth/... ; everything else at /o/<org>/<app>/site/...
+  var prefix = uri === '/auth' || uri.indexOf('/auth/') === 0
+      ? '/o/' + e.o + '/' + e.a
+      : '/o/' + e.o + '/' + e.a + '/site';
+  request.uri = prefix + uri;             // "/o/<org>/<app>/site/e/foo"
+  request.headers['x-dilaya-app-host'] = { value: host };  // carry viewer host to origin
+  return request;
+}`),
+        });
+
+        // Same API-GW custom-domain origin as the path URL. Default HttpOrigin
+        // Host = `customDomain`, so API Gateway's domain mapping still matches.
+        const appContentDistribution = new cloudfront.Distribution(
+          this,
+          "AppContentDistribution",
+          {
+            certificate: appContentCertificate,
+            domainNames: [`*.${appContentDomain}`],
+            defaultBehavior: {
+              origin: new origins.HttpOrigin(customDomain, {
+                protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+              }),
+              viewerProtocolPolicy:
+                cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+              allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+              cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+              originRequestPolicy: new cloudfront.OriginRequestPolicy(
+                this,
+                "AppContentOriginPolicy",
+                {
+                  // The frontend session cookies the auth Lambda sets +
+                  // the frontend authorizer reads (dilaya_* current, hereya_id_token
+                  // legacy). CloudFront strips any cookie not listed.
+                  cookieBehavior:
+                    cloudfront.OriginRequestCookieBehavior.allowList(
+                      "dilaya_id_token",
+                      "hereya_id_token",
+                      "dilaya_agent"
+                    ),
+                  // Base forwarded set + `x-dilaya-app-host` (added to
+                  // frontendForwardHeaders above when appContentDomain is set).
+                  headerBehavior:
+                    cloudfront.OriginRequestHeaderBehavior.allowList(
+                      ...frontendForwardHeaders
+                    ),
+                  queryStringBehavior:
+                    cloudfront.OriginRequestQueryStringBehavior.all(),
+                }
+              ),
+              functionAssociations: [
+                {
+                  function: appHostRouterFn,
+                  eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+                },
+              ],
+            },
+          }
+        );
+
+        // Route53 wildcard A + AAAA -> the content distribution.
+        new route53.ARecord(this, "AppContentWildcardA", {
+          zone: appContentZone,
+          recordName: `*.${appContentDomain}`,
+          target: route53.RecordTarget.fromAlias(
+            new targets.CloudFrontTarget(appContentDistribution)
+          ),
+        });
+        new route53.AaaaRecord(this, "AppContentWildcardAAAA", {
+          zone: appContentZone,
+          recordName: `*.${appContentDomain}`,
+          target: route53.RecordTarget.fromAlias(
+            new targets.CloudFrontTarget(appContentDistribution)
+          ),
+        });
+
+        // --- Connector fn env: the connector regenerates the host map at
+        //     runtime, so it needs the function name + distribution id.
+        fn.addEnvironment("APP_CONTENT_DOMAIN", appContentDomain);
+        fn.addEnvironment(
+          "APP_CONTENT_CF_FUNCTION_NAME",
+          appHostRouterFn.functionName
+        );
+        fn.addEnvironment(
+          "APP_CONTENT_DISTRIBUTION_ID",
+          appContentDistribution.distributionId
+        );
+
+        // --- IAM (connector fn role): update ONLY this content function's code
+        //     (the baked HOSTMAP). Scoped to the function ARN — nothing else new.
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: [
+              "cloudfront:DescribeFunction",
+              "cloudfront:UpdateFunction",
+              "cloudfront:PublishFunction",
+            ],
+            resources: [
+              `arn:aws:cloudfront::${this.account}:function/${appHostRouterFn.functionName}`,
+            ],
+          })
+        );
+
+        new cdk.CfnOutput(this, "AppContentDistributionDomain", {
+          value: appContentDistribution.distributionDomainName,
+        });
+        new cdk.CfnOutput(this, "AppContentCfFunctionName", {
+          value: appHostRouterFn.functionName,
+        });
+      }
 
       // -------------------------------------------------------------------
       // CloudFront distribution for frontend (*.{customDomain})
