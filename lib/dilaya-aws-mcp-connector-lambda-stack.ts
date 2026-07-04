@@ -1116,9 +1116,13 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
         // --- IAM (connector fn role): update ONLY this content function's code
         //     (the baked HOSTMAP). Scoped to the function ARN — nothing else new.
+        //     GetFunction is required: regenerateHostMap reads the current code
+        //     bytes (GetFunction) to swap only the `var HOSTMAP = {};` line;
+        //     DescribeFunction returns config+ETag but NOT the code.
         fn.addToRolePolicy(
           new iam.PolicyStatement({
             actions: [
+              "cloudfront:GetFunction",
               "cloudfront:DescribeFunction",
               "cloudfront:UpdateFunction",
               "cloudfront:PublishFunction",

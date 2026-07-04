@@ -1,5 +1,5 @@
 name: dilaya/aws-mcp-connector-lambda
-version: 0.1.8
+version: 0.1.9
 description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Also serves the static, no-authorizer agent-loop, Telegram, and integration-secret setup routes (/o/{orgId}/{app}/{agent,telegram,secrets}/{proxy+}); SSM secret access is multi-tenant (/dilaya/*/apps/*), isolation enforced in code. The per-app Lambda permissions boundary additionally allows own-app mail/secrets SSM reads (/dilaya/*/apps/*/{mail,secrets}/*) + KMS-via-SSM decrypt. When appContentDomain is set, provisions the app-content-domain edge layer: a CloudFront distribution (*.appContentDomain, wildcard cert + DNS) with a viewer-request Function that host-routes flat vanity hosts <app>--<orgslug>.appContentDomain to the per-app site/auth routes (tagging x-dilaya-app-host), plus auth-lambda vanity-host cookie/redirect awareness — inert without appContentDomain. Forked from hereya/aws-mcp-app-lambda."
 visibility: private
 iac: cdk
