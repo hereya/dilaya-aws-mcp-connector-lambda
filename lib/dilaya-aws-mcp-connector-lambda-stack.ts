@@ -560,6 +560,10 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             dataApiUrl: plainEnv["dataApiUrl"] ?? "",
             registryTableName: plainEnv["registryTableName"] ?? "",
             capabilitySecretArn: capSecretName,
+            // App-content origin lock: when set, the authorizer denies direct
+            // (non-vanity-edge) requests to site/auth routes, so tenant frontends
+            // answer only via <app>--<org>.<appContentDomain>, never app.dilaya.eu.
+            appContentDomain: appContentDomain ?? "",
           },
         }
       );
