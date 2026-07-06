@@ -1,5 +1,5 @@
 name: dilaya/aws-mcp-connector-lambda
-version: 0.1.10
+version: 0.1.11
 description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Also serves the static, no-authorizer agent-loop, Telegram, and integration-secret setup routes (/o/{orgId}/{app}/{agent,telegram,secrets}/{proxy+}); SSM secret access is multi-tenant (/dilaya/*/apps/*), isolation enforced in code. The per-app Lambda permissions boundary additionally allows own-app mail/secrets SSM reads (/dilaya/*/apps/*/{mail,secrets}/*) + KMS-via-SSM decrypt. When appContentDomain is set, provisions the app-content-domain edge layer: a CloudFront distribution (*.appContentDomain, wildcard cert + DNS) with a viewer-request Function that host-routes flat vanity hosts <app>--<orgslug>.appContentDomain to the per-app site/auth routes (tagging x-dilaya-app-host), plus auth-lambda vanity-host cookie/redirect awareness — inert without appContentDomain. Forked from hereya/aws-mcp-app-lambda."
 visibility: private
 iac: cdk
@@ -19,4 +19,7 @@ parameters:
     mandatory: false
   appContentCertArn:
     description: "us-east-1 ACM ARN of the pre-created *.<appContentDomain> wildcard certificate (passed in, NOT created by CDK). Required when appContentDomain is set."
+    mandatory: false
+  appContentOriginSecret:
+    description: "Shared secret for the UN-FORGEABLE origin lock. When set (with appContentDomain), the app-content CloudFront distribution stamps it as x-dilaya-origin-verify on every edge->origin request and the frontend authorizer requires it on site/auth routes — so a direct app.dilaya.eu path hit (which can't reproduce the secret) is denied. Supply from a GitHub Secret, not a Variable. Absent → the authorizer keeps the forgeable marker-presence gate."
     mandatory: false

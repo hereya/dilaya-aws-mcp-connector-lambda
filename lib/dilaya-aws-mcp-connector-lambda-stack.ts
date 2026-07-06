@@ -66,6 +66,13 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     const appContentDomain = process.env["appContentDomain"];
     const appContentZoneId = process.env["appContentZoneId"];
     const appContentCertArn = process.env["appContentCertArn"];
+    // Un-forgeable origin lock (optional). When set (and appContentDomain is set),
+    // the app-content CloudFront distribution stamps this SECRET on every edge->origin
+    // request as `x-dilaya-origin-verify`, and the frontend authorizer requires it on
+    // site/auth routes. A direct hit on the first-party path URL can't reproduce the
+    // secret, so it's denied — unlike the plain `x-dilaya-app-host` marker, which a
+    // client can hand-forge. Absent → the authorizer keeps the marker-presence gate.
+    const appContentOriginSecret = process.env["appContentOriginSecret"];
 
     // RFC 8707 audience binding: the connector's own /mcp resource URL. Derived
     // from customDomain so it can't be dropped (Hereya only forwards hereyavars
@@ -564,6 +571,10 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             // (non-vanity-edge) requests to site/auth routes, so tenant frontends
             // answer only via <app>--<org>.<appContentDomain>, never app.dilaya.eu.
             appContentDomain: appContentDomain ?? "",
+            // Un-forgeable variant: the shared secret the app-content distribution
+            // stamps as `x-dilaya-origin-verify`. When present the authorizer accepts
+            // it (and, transitionally, the legacy marker); empty → marker-only gate.
+            appContentOriginSecret: appContentOriginSecret ?? "",
           },
         }
       );
@@ -1052,6 +1063,17 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             defaultBehavior: {
               origin: new origins.HttpOrigin(customDomain, {
                 protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+                // Un-forgeable origin lock: stamp the shared secret on every
+                // edge->origin request. Only this distribution knows it, so a
+                // direct app.dilaya.eu hit (no CloudFront) can't reproduce it.
+                // Added only when the secret is configured (else feature-off).
+                ...(appContentOriginSecret
+                  ? {
+                      customHeaders: {
+                        "x-dilaya-origin-verify": appContentOriginSecret,
+                      },
+                    }
+                  : {}),
               }),
               viewerProtocolPolicy:
                 cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
