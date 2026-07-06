@@ -1,156 +1,76 @@
-# hereya-aws-mcp-app-lambda
+# dilaya/aws-mcp-connector-lambda
 
-Deploys a Lambda function behind its own HTTP API Gateway v2 with **per-org OAuth authorization** and optional subdomain routing. Designed as the per-app provisioning package (Stack 4) in a multi-tenant platform.
+The **deploy package** for the multi-tenant **Dilaya MCP connector** (`dilaya/connector`). It
+provisions a single Lambda behind an HTTP API Gateway v2 that serves **ONE `/mcp` endpoint for every
+organization** — the org is selected inside the OAuth token, not by a per-org deployment. Forked
+from `hereya/aws-mcp-app-lambda`; the per-org fork keeps using that original package untouched.
 
-Database access, S3 access, and other infrastructure dependencies are provided by separate Hereya packages. Their outputs (IAM policies, connection strings, bucket names, etc.) arrive via `hereyaProjectEnv` and are automatically injected into the Lambda.
+Database, storage, and other infra come from separate Hereya packages (`dilaya/aws-sqlite-data`,
+`hereya/aws-file-storage`, `hereya/postmark-account-credentials`, …). Their outputs (IAM policies,
+`dataApiUrl`, bucket names, secrets) arrive via `hereyaProjectEnv` and are injected into the Lambda.
 
-## Architecture
+## Multi-tenant model (no bound org)
+
+There is **no mandatory `organizationId`**. When `organizationId` is empty (the norm), the authorizer
+runs in **multi-tenant** mode: it validates the JWT from the single-URL **connect OAuth AS** (issuer
+`https://dilaya.eu/oauth/connect`), checks the RFC 8707 `aud` = `https://<customDomain>/mcp`, and
+injects `userId` / `orgIds` (the token's **org set**) / `orgRole` into every request. (If
+`organizationId` *is* set, it falls back to legacy single-org binding — used only by the retired
+per-org app.)
+
+## Routes
 
 ```
-                  julie-recipes.hereya.app
-                           |
-                           v
-              ┌────────────────────────┐
-              │   Per-App HTTP API      │
-              │                         │
-              │   /{proxy+} ───────────┼──> App Lambda
-              │   /         ───────────┼──> App Lambda
-              │                         │
-              │   OAuth Authorizer      │
-              │   (JWT + org binding)   │
-              └────────────────────────┘
+POST /mcp                                  → JWT authorizer (org_ids) → connector Lambda   (401 on reject)
 
-    hereyaProjectEnv provides:
-    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-    │ iamPolicy*   │  │ secret://*   │  │ plain vars   │
-    │ -> IAM role  │  │ -> Secrets   │  │ -> env vars  │
-    │   policies   │  │   Manager    │  │              │
-    └──────────────┘  └──────────────┘  └──────────────┘
+Static public routes (NO authorizer — self-authenticating):
+  POST /o/{orgId}/{app}/agent/token        → exchange a single-use setup token for a poll token
+  GET  /o/{orgId}/{app}/agent/poll         → Bearer poll token → { shouldWake, mode, lifecycle }
+  POST /o/{orgId}/{app}/telegram/webhook   → inbound Telegram (secret-token verified)
+  GET/POST /o/{orgId}/{app}/telegram/setup → one-time bot-token entry form
+  GET/POST /o/{orgId}/{app}/secrets/setup  → one-time integration-secret entry form
 ```
 
-## AWS Resources Created
+Per-app web frontends are served at the path URL `https://<customDomain>/o/<org>/<app>/site/` (and,
+when the app-content edge layer is on, additionally at a flat vanity host — see below).
 
-- **Lambda Function** -- App code from `{hereyaProjectRootDir}/dist`, Node.js 22.x runtime
-- **Authorizer Lambda** -- JWT validator that checks token signature, expiry, issuer, and org_id binding
-- **HTTP API** (API Gateway v2) -- Per-app API with catch-all routes protected by the authorizer
-- **Secrets Manager Secrets** -- For any `secret://` prefixed values in hereyaProjectEnv
-- **Custom Domain** (optional) -- Subdomain using wildcard cert from Stack 3
-- **Route53 A Record** (optional) -- DNS alias for the custom subdomain
+## App-content edge layer (flat vanity hosts) — optional
 
-## Inputs
+Set all three params together to additionally serve each app's frontend at
+`<app>--<orgslug>.<appContentDomain>` (e.g. `smartcal--novopattern.dilaya-apps.eu`), **in addition**
+to the path URL. Omitted → the feature is fully inert (no CloudFront, no DNS, no `cloudfront:*` IAM).
 
-Configuration is provided via environment variables:
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `appContentDomain` | optional | The content domain (e.g. `dilaya-apps.eu`). Absent → feature off. |
+| `appContentZoneId` | with domain | Route53 hosted-zone id for `appContentDomain`. |
+| `appContentCertArn` | with domain | us-east-1 ACM ARN of the pre-created `*.<appContentDomain>` wildcard cert (passed in, NOT created by CDK). |
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `hereyaProjectRootDir` | **Yes** | -- | Path to app code. Lambda loads from `{path}/dist`. |
-| `oauthServerUrl` | **Yes** | -- | Hereya Cloud OAuth server URL for JWT validation (JWKS endpoint). |
-| `organizationId` | **Yes** | -- | Organization ID. The authorizer rejects JWTs whose `org_id` claim doesn't match. |
-| `hereyaProjectEnv` | No | `"{}"` | JSON string of environment variables from dependency packages. Supports three types (see below). |
-| `customDomain` | No | -- | Full subdomain for the app, e.g., `julie-recipes.hereya.app`. |
-| `customDomainZone` | No | auto-extracted | Base domain zone for Route53 lookup, e.g., `hereya.app`. Auto-extracted from `customDomain` if not provided. |
-| `wildcardCertificateArn` | No* | -- | ACM wildcard certificate ARN from Stack 3. **Required when `customDomain` is set.** |
-| `memorySize` | No | `256` | Lambda memory in MB. |
-| `timeout` | No | `30` | Lambda timeout in seconds. |
-| `handler` | No | `handler.handler` | Lambda handler (file.function format). |
+When enabled, the stack provisions a CloudFront distribution (alt name `*.<appContentDomain>`,
+wildcard viewer cert) fronting the same API-Gateway origin, a wildcard Route53 A/AAAA record, and a
+**viewer-request CloudFront Function** holding a baked host→`{org,app}` map. The function rewrites a
+vanity-host request to the existing `/o/<org>/<app>/{site|auth}/…` route and tags the viewer host in
+`x-dilaya-app-host`. The connector regenerates that map at runtime (`GetFunction` → `UpdateFunction`
+→ `PublishFunction`) as apps are given hosts; the cert + DNS are static and never change per host.
 
-### hereyaProjectEnv Variable Types
+## `hereyaProjectEnv` contract
 
-The `hereyaProjectEnv` JSON string is automatically populated by Hereya from dependency package outputs. Variables are processed into three categories:
+- `iamPolicy*` keys → attached to the Lambda role as IAM policies.
+- `secret://…` values → consolidated into Secrets Manager and exposed via `SECRET_KEYS`.
+- plain values → env vars.
 
-| Type | Detection | Handling |
-|------|-----------|----------|
-| **IAM Policies** | Key starts with `iamPolicy` or `IAM_POLICY_` | Parsed as JSON IAM policy document. Each statement is attached to the Lambda's execution role. |
-| **Secrets** | Value starts with `secret://` | Stored in Secrets Manager as `/{stackName}/{key}`. Lambda receives the secret **name** (not value) as env var. Lambda is granted `secretsmanager:GetSecretValue`. A `SECRET_KEYS` env var lists all secret keys (comma-separated). |
-| **Plain** | Everything else | Passed directly as Lambda environment variables. |
+Per-app frontend Lambdas (the `frontend-authorizer` + `auth-lambda`) additionally get a narrow SSM
+read ceiling of `/dilaya/<orgId>/apps/<app>/{mail,secrets}/*` (own-app Postmark token + integration
+secrets) plus KMS-via-SSM decrypt.
 
-**Example hereyaProjectEnv:**
+## Build & ship
 
-```json
-{
-  "iamPolicyAwsS3Bucket": "{\"Version\":\"2012-10-17\",\"Statement\":[...]}",
-  "iamPolicyAuroraDataApi": "{\"Version\":\"2012-10-17\",\"Statement\":[...]}",
-  "bucketName": "platform-my-stack",
-  "clusterArn": "arn:aws:rds:us-east-1:123:cluster:abc",
-  "masterSecretArn": "secret://arn:aws:secretsmanager:...",
-  "DATABASE_URL": "secret://postgresql://user:pass@host/db"
-}
-```
-
-## Outputs
-
-| Output | Description | Example Value |
-|--------|-------------|---------------|
-| `ServiceUrl` | The app's URL. Custom domain HTTPS URL if configured, otherwise the API Gateway endpoint. | `https://julie-recipes.hereya.app` |
-
-## Usage with Hereya
-
-### Basic deployment
+CDK (`iac: cdk`). It **synths from TypeScript via ts-node** (`cdk.json` → `npx ts-node --prefer-ts-exts
+bin/…ts`), so **edit the `.ts` under `lib/` — the committed `.js` is vestigial** (gitignored build
+output). No CI in this repo: publish a new version by bumping `hereyarc.yaml`, committing, pushing,
+and running `hereya publish`. The connector's `hereya.yaml` pins the version; to roll a change to
+prod, publish here, bump that pin, then do a `dilaya/connector` release (on an explicit deploy GO).
 
 ```bash
-hereya deploy hereya/aws-mcp-app-lambda \
-  -p oauthServerUrl=https://auth.hereya.app \
-  -p organizationId=org_abc123
-```
-
-### With custom domain (using Stack 3 outputs)
-
-```bash
-hereya deploy hereya/aws-mcp-app-lambda \
-  -p oauthServerUrl=https://auth.hereya.app \
-  -p organizationId=org_abc123 \
-  -p customDomain=julie-recipes.hereya.app \
-  -p wildcardCertificateArn=arn:aws:acm:us-east-1:123:certificate/abc
-```
-
-### With dependency packages
-
-In a project's `hereya.yaml`:
-
-```yaml
-deploy:
-  hereya/aws-mcp-app-lambda:
-    version: 0.1.0
-packages:
-  hereya/aws-aurora-dataapi:
-    version: 0.1.0
-  hereya/aws-s3-shared:
-    version: 0.1.0
-```
-
-The outputs from `aws-aurora-dataapi` (clusterArn, masterSecretArn, iamPolicyAuroraDataApi) and `aws-s3-shared` (bucketName, bucketArn, iamPolicyAwsS3Bucket) are automatically injected into `hereyaProjectEnv`.
-
-## OAuth Authorization
-
-Every request to the app Lambda is authenticated via a Lambda authorizer that:
-
-1. Extracts the Bearer token from the `Authorization` header
-2. Fetches the JWKS from `{oauthServerUrl}/.well-known/jwks.json` (cached for 1 hour)
-3. Verifies the RS256 JWT signature
-4. Checks token expiration
-5. Validates the issuer matches `oauthServerUrl`
-6. Verifies `org_id` claim matches the configured `organizationId`
-
-On success, the authorizer passes `userId`, `orgId`, and `orgRole` in the request context, available to the app Lambda via `event.requestContext.authorizer.lambda.*`.
-
-Authorization results are cached at the API Gateway level for 5 minutes per token.
-
-## Custom Domain Setup
-
-This package reuses the wildcard ACM certificate from the shared API Gateway package (Stack 3, `hereya/aws-apigateway`). Each app gets:
-
-1. A specific `DomainName` (e.g., `julie-recipes.hereya.app`) using the shared wildcard cert
-2. An `ApiMapping` connecting the subdomain to this app's HttpApi
-3. A Route53 A record (alias) for the subdomain
-
-Route53 resolves specific records over wildcard records, so the per-app record takes priority over Stack 3's wildcard.
-
-## Development
-
-```bash
-npm install
-npm run build    # Compile TypeScript
-npm run watch    # Watch mode
-npx cdk synth    # Synthesize CloudFormation template
-npx cdk deploy   # Deploy stack
+npm run build   # tsc (typecheck; the .js it emits is not shipped)
 ```
