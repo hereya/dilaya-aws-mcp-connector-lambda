@@ -13,6 +13,8 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as logs from "aws-cdk-lib/aws-logs";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Construct } from "constructs";
 import * as path from "path";
 import * as fs from "fs";
@@ -193,6 +195,35 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     if (secretKeys.length > 0) {
       fn.addEnvironment("SECRET_KEYS", secretKeys.join(","));
     }
+
+    // Capability-rejection alarm. The VM denies a Data API call whose HMAC
+    // capability token is missing/invalid; the connector logs the rejection
+    // ("capability rejected: <reason>"). A burst of these took ~21h to surface
+    // via the log sweep (2026-07-06 bad_signature incident) — this filter+alarm
+    // turns any recurrence into a metric datapoint within minutes. `fn.logGroup`
+    // pre-creates/adopts /aws/lambda/<fn> so the filter never races the lazy
+    // log-group creation on a fresh stack. No alarm action wired here — the
+    // alarm state itself is the signal (SNS/email can be added later).
+    const capabilityRejectedFilter = new logs.MetricFilter(this, "CapabilityRejectedFilter", {
+      logGroup: fn.logGroup,
+      metricNamespace: "Dilaya/Connector",
+      metricName: "CapabilityRejected",
+      filterPattern: logs.FilterPattern.literal('"capability rejected"'),
+      metricValue: "1",
+    });
+    new cloudwatch.Alarm(this, "CapabilityRejectedAlarm", {
+      metric: capabilityRejectedFilter.metric({
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription:
+        "Dilaya connector: Data API capability rejections (e.g. bad_signature) in the last 5 min — " +
+        "see the 2026-07-06 incident; a poisoned Lambda env can hide behind poll-only traffic.",
+    });
 
     // Attach IAM policies from dependency packages
     for (const [, value] of Object.entries(policyEnv)) {
