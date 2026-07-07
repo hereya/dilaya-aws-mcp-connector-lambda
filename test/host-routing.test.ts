@@ -158,13 +158,14 @@ describe("app-content host-routing (appContentDomain set)", () => {
     });
   });
 
-  it("grants the connector Lambda the 3 cloudfront:* function perms scoped to the content function ARN", () => {
+  it("grants the connector Lambda the 4 cloudfront:* function perms scoped to the content function ARN", () => {
     const t = build();
     t.hasResourceProperties("AWS::IAM::Policy", {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: [
+              "cloudfront:GetFunction",
               "cloudfront:DescribeFunction",
               "cloudfront:UpdateFunction",
               "cloudfront:PublishFunction",
