@@ -8,6 +8,7 @@ cdk.out/
 !lib/frontend-authorizer/index.js
 !lib/auth-lambda/**/*.js
 !lib/cognito-triggers/**/*.js
+!lib/byod-origin-restamp/index.js
 *.tsbuildinfo
 .DS_Store
 cdk.out/
