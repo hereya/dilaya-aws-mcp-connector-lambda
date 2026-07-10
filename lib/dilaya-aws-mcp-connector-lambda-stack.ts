@@ -10,6 +10,7 @@ import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as triggers from "aws-cdk-lib/triggers";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -75,6 +76,12 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // secret, so it's denied — unlike the plain `x-dilaya-app-host` marker, which a
     // client can hand-forge. Absent → the authorizer keeps the marker-presence gate.
     const appContentOriginSecret = process.env["appContentOriginSecret"];
+    // Transitional acceptance during a secret ROTATION: set this to the OLD
+    // secret while rolling the new one (the authorizer accepts either until the
+    // CloudFront origin-header updates propagate), then clear it on the next
+    // deploy. Empty → strict single-secret mode.
+    const appContentOriginSecretPrevious =
+      process.env["appContentOriginSecretPrevious"];
 
     // RFC 8707 audience binding: the connector's own /mcp resource URL. Derived
     // from customDomain so it can't be dropped (Hereya only forwards hereyavars
@@ -606,6 +613,9 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             // stamps as `x-dilaya-origin-verify`. When present the authorizer accepts
             // it (and, transitionally, the legacy marker); empty → marker-only gate.
             appContentOriginSecret: appContentOriginSecret ?? "",
+            // Rotation window: the PREVIOUS secret is also accepted while set,
+            // so re-stamping the distributions causes no 403 window.
+            appContentOriginSecretPrevious: appContentOriginSecretPrevious ?? "",
           },
         }
       );
@@ -1303,6 +1313,50 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             },
           })
         );
+
+        // --- Origin-secret rotation, deploy-time: the per-org BYOD
+        //     distributions are runtime-created (CloudFormation doesn't know
+        //     them), so a deploy-time Trigger re-stamps their origin-verify
+        //     header with the CURRENT secret. Re-fires when the secret changes
+        //     (it is part of the trigger fn's env); idempotent otherwise. A
+        //     failed re-stamp FAILS THE DEPLOY on purpose. Zero-downtime via
+        //     appContentOriginSecretPrevious (dual-accept in the authorizer).
+        if (appContentOriginSecret) {
+          const restampFn = new triggers.TriggerFunction(
+            this,
+            "ByodOriginRestamp",
+            {
+              runtime: lambda.Runtime.NODEJS_22_X,
+              handler: "index.handler",
+              code: lambda.Code.fromAsset(
+                path.join(__dirname, "byod-origin-restamp")
+              ),
+              timeout: cdk.Duration.minutes(5),
+              environment: { ORIGIN_SECRET: appContentOriginSecret },
+            }
+          );
+          restampFn.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: ["tag:GetResources"],
+              resources: ["*"],
+            })
+          );
+          restampFn.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: [
+                "cloudfront:GetDistribution",
+                "cloudfront:GetDistributionConfig",
+                "cloudfront:UpdateDistribution",
+              ],
+              resources: [
+                `arn:aws:cloudfront::${this.account}:distribution/*`,
+              ],
+              conditions: {
+                StringEquals: { "aws:ResourceTag/dilaya:byod": "1" },
+              },
+            })
+          );
+        }
 
         new cdk.CfnOutput(this, "AppContentDistributionDomain", {
           value: appContentDistribution.distributionDomainName,
