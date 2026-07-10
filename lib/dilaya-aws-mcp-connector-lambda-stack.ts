@@ -1193,6 +1193,22 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             appContentOriginSecret
           );
         }
+        // --- Sender-domain scheme on the content domain: per-app Postmark
+        //     senders live at `<app>--<orgslug>.<appContentDomain>` (matching
+        //     the vanity host), with DKIM/return-path records in the content
+        //     zone — the first-party connector domain carries no tenant mail.
+        //     The connector needs the zone id + record rights on that zone.
+        fn.addEnvironment("APP_CONTENT_ZONE_ID", appContentZoneId);
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: [
+              "route53:ChangeResourceRecordSets",
+              "route53:ListResourceRecordSets",
+              "route53:GetHostedZone",
+            ],
+            resources: [`arn:aws:route53:::hostedzone/${appContentZoneId}`],
+          })
+        );
 
         // --- IAM (connector fn role): update ONLY this content function's code
         //     (the baked HOSTMAP). Scoped to the function ARN — nothing else new.
