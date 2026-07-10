@@ -11,6 +11,7 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as triggers from "aws-cdk-lib/triggers";
+import * as ssmparam from "aws-cdk-lib/aws-ssm";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -1322,6 +1323,33 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         //     failed re-stamp FAILS THE DEPLOY on purpose. Zero-downtime via
         //     appContentOriginSecretPrevious (dual-accept in the authorizer).
         if (appContentOriginSecret) {
+          // Versioned memory of the CURRENT secret: CloudFormation updates this
+          // parameter on each rotation, and SSM keeps the version history — the
+          // frontend authorizer auto-accepts version N-1 during a grace window
+          // after a rotation, so NO manual "previous secret" is ever needed.
+          const originSecretParam = new ssmparam.StringParameter(
+            this,
+            "AppContentOriginSecretParam",
+            {
+              parameterName: `/dilaya/${cdk.Stack.of(this).stackName}/app-content-origin-secret`,
+              stringValue: appContentOriginSecret,
+              description:
+                "Current app-content origin-lock secret (version history feeds the authorizer's rotation grace window)",
+            }
+          );
+          if (frontendAuthorizerRef) {
+            frontendAuthorizerRef.addEnvironment(
+              "ORIGIN_SECRET_PARAM",
+              originSecretParam.parameterName
+            );
+            frontendAuthorizerRef.addToRolePolicy(
+              new iam.PolicyStatement({
+                actions: ["ssm:GetParameter", "ssm:GetParameterHistory"],
+                resources: [originSecretParam.parameterArn],
+              })
+            );
+          }
+
           const restampFn = new triggers.TriggerFunction(
             this,
             "ByodOriginRestamp",
