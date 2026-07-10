@@ -1289,6 +1289,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
               "cloudfront:UpdateDistribution",
               "cloudfront:TagResource",
               "cloudfront:ListTagsForResource",
+              // Live-domain migration: atomically move an alias ONTO the org
+              // distribution (cross-account source proven via the `_<alias>`
+              // TXT record; the target must already carry a covering cert).
+              "cloudfront:AssociateAlias",
+              "cloudfront:ListConflictingAliases",
             ],
             resources: [
               `arn:aws:cloudfront::${this.account}:distribution/*`,
