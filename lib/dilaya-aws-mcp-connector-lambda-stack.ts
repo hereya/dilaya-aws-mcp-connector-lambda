@@ -1248,9 +1248,12 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             },
           })
         );
+        // NOTE: the CreateDistributionWithTags API authorizes against the
+        // cloudfront:CreateDistribution action (+ TagResource for the
+        // creation-time tags) — there is no CreateDistributionWithTags action.
         fn.addToRolePolicy(
           new iam.PolicyStatement({
-            actions: ["cloudfront:CreateDistributionWithTags"],
+            actions: ["cloudfront:CreateDistribution", "cloudfront:TagResource"],
             resources: [
               `arn:aws:cloudfront::${this.account}:distribution/*`,
             ],
