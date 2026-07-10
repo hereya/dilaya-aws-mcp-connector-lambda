@@ -1083,6 +1083,32 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 }`),
         });
 
+        // The origin-request policy is SHARED with the runtime-created BYOD
+        // per-org distributions (the connector references it by id via
+        // APP_CONTENT_ORIGIN_REQUEST_POLICY_ID), so it is hoisted out of the
+        // distribution literal.
+        const appContentOriginPolicy = new cloudfront.OriginRequestPolicy(
+          this,
+          "AppContentOriginPolicy",
+          {
+            // The frontend session cookies the auth Lambda sets +
+            // the frontend authorizer reads (dilaya_* current, hereya_id_token
+            // legacy). CloudFront strips any cookie not listed.
+            cookieBehavior: cloudfront.OriginRequestCookieBehavior.allowList(
+              "dilaya_id_token",
+              "hereya_id_token",
+              "dilaya_agent"
+            ),
+            // Base forwarded set + `x-dilaya-app-host` (added to
+            // frontendForwardHeaders above when appContentDomain is set).
+            headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(
+              ...frontendForwardHeaders
+            ),
+            queryStringBehavior:
+              cloudfront.OriginRequestQueryStringBehavior.all(),
+          }
+        );
+
         // Same API-GW custom-domain origin as the path URL. Default HttpOrigin
         // Host = `customDomain`, so API Gateway's domain mapping still matches.
         const appContentDistribution = new cloudfront.Distribution(
@@ -1110,29 +1136,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
                 cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
               allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
               cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-              originRequestPolicy: new cloudfront.OriginRequestPolicy(
-                this,
-                "AppContentOriginPolicy",
-                {
-                  // The frontend session cookies the auth Lambda sets +
-                  // the frontend authorizer reads (dilaya_* current, hereya_id_token
-                  // legacy). CloudFront strips any cookie not listed.
-                  cookieBehavior:
-                    cloudfront.OriginRequestCookieBehavior.allowList(
-                      "dilaya_id_token",
-                      "hereya_id_token",
-                      "dilaya_agent"
-                    ),
-                  // Base forwarded set + `x-dilaya-app-host` (added to
-                  // frontendForwardHeaders above when appContentDomain is set).
-                  headerBehavior:
-                    cloudfront.OriginRequestHeaderBehavior.allowList(
-                      ...frontendForwardHeaders
-                    ),
-                  queryStringBehavior:
-                    cloudfront.OriginRequestQueryStringBehavior.all(),
-                }
-              ),
+              originRequestPolicy: appContentOriginPolicy,
               functionAssociations: [
                 {
                   function: appHostRouterFn,
@@ -1170,6 +1174,25 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           "APP_CONTENT_DISTRIBUTION_ID",
           appContentDistribution.distributionId
         );
+        // --- BYOD (customer-owned custom domains): the connector lazily creates
+        //     ONE standard CloudFront distribution per org at first
+        //     set-custom-domain, replicating the app-content behavior — same
+        //     API-GW origin + origin-verify secret, the SAME apphost-router
+        //     function, and the SAME origin-request policy (referenced by id).
+        fn.addEnvironment(
+          "APP_CONTENT_ORIGIN_REQUEST_POLICY_ID",
+          appContentOriginPolicy.originRequestPolicyId
+        );
+        fn.addEnvironment(
+          "APP_CONTENT_CF_FUNCTION_ARN",
+          appHostRouterFn.functionArn
+        );
+        if (appContentOriginSecret) {
+          fn.addEnvironment(
+            "APP_CONTENT_ORIGIN_SECRET",
+            appContentOriginSecret
+          );
+        }
 
         // --- IAM (connector fn role): update ONLY this content function's code
         //     (the baked HOSTMAP). Scoped to the function ARN — nothing else new.
@@ -1187,6 +1210,73 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
             resources: [
               `arn:aws:cloudfront::${this.account}:function/${appHostRouterFn.functionName}`,
             ],
+          })
+        );
+
+        // --- IAM (connector fn role): BYOD per-org distributions + certs.
+        //     ABAC on the marker tag `dilaya:byod=1`: anything the connector
+        //     creates must carry it (RequestTag condition), and every mutation
+        //     is gated on the resource carrying it (ResourceTag condition) — so
+        //     the connector can never touch non-BYOD certs/distributions (in
+        //     particular NOT the shared app-content distribution). Org
+        //     segregation itself is enforced by the connector's authz
+        //     chokepoint (same trust model as the Cognito admin grant).
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: ["acm:RequestCertificate", "acm:AddTagsToCertificate"],
+            resources: ["*"],
+            conditions: {
+              StringEquals: { "aws:RequestTag/dilaya:byod": "1" },
+              "ForAllValues:StringEquals": {
+                "aws:TagKeys": ["dilaya:byod", "dilaya:orgId"],
+              },
+            },
+          })
+        );
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: [
+              "acm:DescribeCertificate",
+              "acm:DeleteCertificate",
+              "acm:ListTagsForCertificate",
+            ],
+            // CloudFront viewer certs live in us-east-1 regardless of the
+            // stack's region.
+            resources: [`arn:aws:acm:us-east-1:${this.account}:certificate/*`],
+            conditions: {
+              StringEquals: { "aws:ResourceTag/dilaya:byod": "1" },
+            },
+          })
+        );
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: ["cloudfront:CreateDistributionWithTags"],
+            resources: [
+              `arn:aws:cloudfront::${this.account}:distribution/*`,
+            ],
+            conditions: {
+              StringEquals: { "aws:RequestTag/dilaya:byod": "1" },
+              "ForAllValues:StringEquals": {
+                "aws:TagKeys": ["dilaya:byod", "dilaya:orgId"],
+              },
+            },
+          })
+        );
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: [
+              "cloudfront:GetDistribution",
+              "cloudfront:GetDistributionConfig",
+              "cloudfront:UpdateDistribution",
+              "cloudfront:TagResource",
+              "cloudfront:ListTagsForResource",
+            ],
+            resources: [
+              `arn:aws:cloudfront::${this.account}:distribution/*`,
+            ],
+            conditions: {
+              StringEquals: { "aws:ResourceTag/dilaya:byod": "1" },
+            },
           })
         );
 
