@@ -551,6 +551,32 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public MCP-connection routes (NO JWT authorizer). Two surfaces:
+    //   /mcp-connections/{consent,callback} — the org-level OAuth consent flow
+    //     for OUTBOUND connections to external MCP servers: `consent` is a
+    //     signed single-use link (org rides in the query + HMAC token, no org
+    //     path segment) that 302s to the target server's authorization page;
+    //     `callback` is the FIXED redirect URI registered via DCR (it must be
+    //     stable across orgs, hence top-level). Tokens land in SSM SecureString
+    //     /dilaya/<orgId>/mcp/* — see the SSM grant below.
+    //   /o/{orgId}/{app}/mcp/{proxy+} — the gateway a per-app backend Lambda
+    //     POSTs to to call a GRANTED tool on a connected server. Auth is the
+    //     app's DILAYA_CAPABILITY token (HMAC-verified in the connector Lambda,
+    //     appId cross-checked against the path), allowlist enforced fail-closed
+    //     server-side. STATIC like the other public routes; the handler
+    //     validates the exact sub-path. Invoke permission is the api-wide
+    //     HttpApiInvokeAll grant below.
+    httpApi.addRoutes({
+      path: "/mcp-connections/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/mcp/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
@@ -837,6 +863,14 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       ? `arn:aws:ssm:${this.region}:${this.account}:parameter/hereya/${organizationId}/apps/*`
       : `arn:aws:ssm:${this.region}:${this.account}:parameter/dilaya/*/apps/*`;
 
+    // Multi-tenant only: outbound MCP-connection OAuth tokens live at
+    // /dilaya/<orgId>/mcp/<connection>/tokens — deliberately OUTSIDE /apps/* so
+    // no per-app Lambda role (own-app /apps/<app>/{mail,secrets}/* only) can
+    // ever read them. Only the connector reads/writes/refreshes them.
+    const mcpTokensSsmArns = organizationId
+      ? []
+      : [`arn:aws:ssm:${this.region}:${this.account}:parameter/dilaya/*/mcp/*`];
+
     fn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: [
@@ -845,7 +879,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           "ssm:PutParameter",
           "ssm:DeleteParameter",
         ],
-        resources: [agentSecretSsmArn],
+        resources: [agentSecretSsmArn, ...mcpTokensSsmArns],
       })
     );
 

@@ -62,6 +62,41 @@ describe("static public agent routes", () => {
     });
   });
 
+  it("exposes ANY /mcp-connections/{proxy+} (OAuth consent + DCR callback) with NO authorizer", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "ANY /mcp-connections/{proxy+}",
+      AuthorizationType: "NONE",
+    });
+  });
+
+  it("exposes ANY /o/{orgId}/{app}/mcp/{proxy+} (capability-authenticated gateway) with NO authorizer", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "ANY /o/{orgId}/{app}/mcp/{proxy+}",
+      AuthorizationType: "NONE",
+    });
+  });
+
+  it("grants the connector Lambda the /dilaya/*/mcp/* token path — and keeps it OUT of the per-app boundary", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(["ssm:PutParameter", "ssm:DeleteParameter"]),
+            Resource: Match.arrayWith([Match.stringLikeRegexp("parameter/dilaya/\\*/mcp/\\*")]),
+          }),
+        ]),
+      },
+    });
+    // The per-app permissions boundary must NOT reach the MCP token path: app
+    // Lambdas call the gateway with their capability token, never SSM directly.
+    const boundaries = t.findResources("AWS::IAM::ManagedPolicy");
+    const json = JSON.stringify(boundaries);
+    expect(json).not.toContain("/mcp/*");
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
@@ -99,7 +134,9 @@ describe("static public agent routes", () => {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: Match.arrayWith(["ssm:PutParameter", "ssm:DeleteParameter"]),
-            Resource: Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*"),
+            // Two resources since the MCP-connection token path joined: the
+            // per-app secret tree + the connector-only /mcp/* token tree.
+            Resource: Match.arrayWith([Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*")]),
           }),
         ]),
       },
