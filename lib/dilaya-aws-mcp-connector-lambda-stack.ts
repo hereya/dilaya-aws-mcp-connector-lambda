@@ -16,6 +16,7 @@ import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Construct } from "constructs";
 import * as path from "path";
@@ -577,6 +578,17 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public app-cron gateway (NO JWT authorizer). A per-app backend Lambda
+    // manages ITS OWN schedules (one-shot reminders, recurring jobs) here,
+    // authenticated by its DILAYA_CAPABILITY token — same self-auth model as
+    // the MCP gateway above. The connector enforces app identity + owns all
+    // Scheduler credentials; app Lambdas get NO scheduler IAM.
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/cron/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
@@ -782,6 +794,66 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // -----------------------------------------------------------------------
 
     const appLambdaArnPattern = `arn:aws:lambda:${this.region}:${this.account}:function:${appLambdaNamePrefix}*`;
+
+    // -----------------------------------------------------------------------
+    // App crons — EventBridge Scheduler invoking per-app Lambdas DIRECTLY.
+    //
+    // "Scheduled deterministic work" for apps: the connector creates schedules
+    // (recurring cron() or one-shot at(), e.g. booking reminders) in ONE
+    // dedicated group, each targeting an app Lambda with a
+    // `{ dilayaCron: { name, schema, orgId } }` payload the `hereya` runtime
+    // recognizes. Invocation is IAM (Scheduler assumes the invoke role below)
+    // — never through the public API, so a cron event cannot be forged from
+    // outside. Retry policy is set connector-side and deliberately SHORT
+    // (transient-only): a failed business action must fail loudly, not be
+    // replayed hours later.
+    // -----------------------------------------------------------------------
+
+    const appCronGroup = new scheduler.CfnScheduleGroup(this, "AppCronGroup", {
+      name: `${this.stackName}-app-crons`,
+    });
+    const appCronInvokeRole = new iam.Role(this, "AppCronInvokeRole", {
+      assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com", {
+        conditions: { StringEquals: { "aws:SourceAccount": this.account } },
+      }),
+      description: "Assumed by EventBridge Scheduler to invoke per-app Lambdas (dilaya app crons).",
+    });
+    appCronInvokeRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["lambda:InvokeFunction"],
+        resources: [appLambdaArnPattern],
+      })
+    );
+    fn.addEnvironment("APP_CRON_GROUP_NAME", appCronGroup.name!);
+    fn.addEnvironment("APP_CRON_INVOKE_ROLE_ARN", appCronInvokeRole.roleArn);
+    // Connector manages schedules ONLY inside its own group; the pass-role is
+    // pinned to the invoke role AND to the Scheduler service.
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "scheduler:CreateSchedule",
+          "scheduler:UpdateSchedule",
+          "scheduler:DeleteSchedule",
+          "scheduler:GetSchedule",
+        ],
+        resources: [
+          `arn:aws:scheduler:${this.region}:${this.account}:schedule/${appCronGroup.name}/*`,
+        ],
+      })
+    );
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["scheduler:ListSchedules"],
+        resources: ["*"],
+      })
+    );
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["iam:PassRole"],
+        resources: [appCronInvokeRole.roleArn],
+        conditions: { StringEquals: { "iam:PassedToService": "scheduler.amazonaws.com" } },
+      })
+    );
 
     fn.addToRolePolicy(
       new iam.PolicyStatement({

@@ -97,6 +97,58 @@ describe("static public agent routes", () => {
     expect(json).not.toContain("/mcp/*");
   });
 
+  it("exposes ANY /o/{orgId}/{app}/cron/{proxy+} (capability-authenticated cron gateway) with NO authorizer", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "ANY /o/{orgId}/{app}/cron/{proxy+}",
+      AuthorizationType: "NONE",
+    });
+  });
+
+  it("provisions the app-cron Scheduler group + invoke role, scoped and pass-role-pinned", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::Scheduler::ScheduleGroup", {
+      Name: Match.stringLikeRegexp("-app-crons$"),
+    });
+    // The invoke role is assumable ONLY by the Scheduler service (same-account).
+    t.hasResourceProperties("AWS::IAM::Role", {
+      AssumeRolePolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Principal: { Service: "scheduler.amazonaws.com" },
+            Condition: Match.objectLike({ StringEquals: Match.objectLike({ "aws:SourceAccount": Match.anyValue() }) }),
+          }),
+        ]),
+      },
+    });
+    // Connector: schedule CRUD only inside its own group + PassRole pinned to Scheduler.
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(["scheduler:CreateSchedule", "scheduler:DeleteSchedule"]),
+            Resource: Match.stringLikeRegexp("schedule/.*-app-crons/\\*"),
+          }),
+        ]),
+      },
+    });
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: "iam:PassRole",
+            Condition: Match.objectLike({
+              StringEquals: Match.objectLike({ "iam:PassedToService": "scheduler.amazonaws.com" }),
+            }),
+          }),
+        ]),
+      },
+    });
+    // The per-app permissions boundary must NOT gain any scheduler access.
+    const boundaries = t.findResources("AWS::IAM::ManagedPolicy");
+    expect(JSON.stringify(boundaries)).not.toContain("scheduler:");
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
