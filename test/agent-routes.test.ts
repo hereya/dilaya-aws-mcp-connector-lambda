@@ -149,6 +149,20 @@ describe("static public agent routes", () => {
     expect(JSON.stringify(boundaries)).not.toContain("scheduler:");
   });
 
+  it("exposes POST /org-events (AS-assertion-authenticated invalidation webhook) with NO authorizer", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "POST /org-events",
+      AuthorizationType: "NONE",
+    });
+    const routes = t.findResources("AWS::ApiGatewayV2::Route", {
+      Properties: { RouteKey: "POST /org-events" },
+    });
+    const [route] = Object.values(routes);
+    expect(route).toBeDefined();
+    expect((route as any).Properties.AuthorizerId).toBeUndefined();
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {

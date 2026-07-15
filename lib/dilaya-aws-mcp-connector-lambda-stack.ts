@@ -589,6 +589,19 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public org-events webhook (NO JWT authorizer). dilaya.eu (the connect
+    // AS) POSTs here on each org modification to invalidate the connector's
+    // org-info cache for that org. Self-authenticated in the connector: the
+    // request carries a short-lived RS256 assertion signed by the AS's own
+    // KMS key, verified against the AS JWKS — the same trust root this
+    // stack's JWT authorizer uses. The custom domain maps straight to API
+    // Gateway (no CloudFront hop), so no header-forwarding concerns.
+    httpApi.addRoutes({
+      path: "/org-events",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
