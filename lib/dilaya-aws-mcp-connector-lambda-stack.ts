@@ -589,6 +589,18 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public app-LLM gateway (NO JWT authorizer). A per-app backend Lambda
+    // runs completions/embeddings on the platform OpenAI key here (runtime
+    // `llm` helper), authenticated by its DILAYA_CAPABILITY token — same
+    // self-auth model as the MCP/cron gateways. The connector enforces the
+    // per-org opt-in + monthly budget and holds the key; app Lambdas carry
+    // NO provider credentials and get no new IAM.
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/llm/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Public org-events webhook (NO JWT authorizer). dilaya.eu (the connect
     // AS) POSTs here on each org modification to invalidate the connector's
     // org-info cache for that org. Self-authenticated in the connector: the
