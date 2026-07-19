@@ -1224,7 +1224,10 @@ async function handler(event) {
   var host = request.headers.host.value.toLowerCase();
   var e;
   try {
-    e = JSON.parse(await kvs.get(host));  // unknown host -> throws
+    // NOTE: the JS 2.0 runtime rejects \`await\` inside a call ARGUMENT
+    // ("await in arguments not supported") — hoist it (prod 503, 2026-07-19).
+    var raw = await kvs.get(host);        // unknown host -> throws
+    e = JSON.parse(raw);
   } catch (err) {
     return request;                       // passthrough -> origin 404
   }
