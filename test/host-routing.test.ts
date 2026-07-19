@@ -19,6 +19,19 @@ import { DilayaConnectorLambdaStack } from "../lib/dilaya-aws-mcp-connector-lamb
 // negative assertion below double-checks the CloudFront function + env are gone.
 // -----------------------------------------------------------------------------
 
+/**
+ * FunctionCode is a plain string until it embeds a CFN token (the static
+ * bucket's RegionalDomainName GetAtt) — then it synths as an Fn::Join. Flatten
+ * either shape to one searchable string (tokens inlined as their JSON).
+ */
+function fnCodeToString(fc: unknown): string {
+  if (typeof fc === "string") return fc;
+  const parts = (fc as any)?.["Fn::Join"]?.[1] ?? [];
+  return parts
+    .map((p: unknown) => (typeof p === "string" ? p : JSON.stringify(p)))
+    .join("");
+}
+
 const APP_CONTENT_DOMAIN = "dilaya-apps.eu";
 const APP_CONTENT_ZONE_ID = "Z0APPCONTENT123";
 const APP_CONTENT_CERT_ARN =
@@ -98,20 +111,56 @@ describe("app-content host-routing (appContentDomain set)", () => {
     });
   });
 
-  it("creates the CloudFront FUNCTION with the byte-stable bootstrap host map", () => {
+  it("creates the KVS-backed router FUNCTION (JS 2.0) with the await hoisted out of call arguments", () => {
     const t = build();
     t.resourceCountIs("AWS::CloudFront::Function", 1);
+    t.resourceCountIs("AWS::CloudFront::KeyValueStore", 1);
     const fns = t.findResources("AWS::CloudFront::Function");
     const [cfFn] = Object.values(fns) as any[];
     expect(cfFn.Properties.Name).toBe("app-app-apphost-router");
-    const code: string = cfFn.Properties.FunctionCode;
-    // Bootstrap map is empty and on its own recognizable line (the connector
-    // swaps ONLY this literal at runtime).
-    expect(code).toContain("var HOSTMAP = {};");
+    expect(cfFn.Properties.FunctionConfig.Runtime).toBe("cloudfront-js-2.0");
+    // The KVS is associated to the function (this is what binds cf.kvs()).
+    expect(
+      cfFn.Properties.FunctionConfig.KeyValueStoreAssociations
+    ).toBeDefined();
+    const code = fnCodeToString(cfFn.Properties.FunctionCode);
+    // Routing table is DATA (KVS lookup) — never a baked map in the code.
+    expect(code).toContain("cf.kvs()");
+    expect(code).not.toContain("var HOSTMAP");
+    // JS 2.0 rejects `await` inside a call ARGUMENT (prod 503, 2026-07-19):
+    // the kvs.get await must be hoisted into its own statement.
+    expect(code).toContain("var raw = await kvs.get(host);");
+    expect(code).not.toMatch(/JSON\.parse\(await/);
     // Tags the viewer host for the origin.
     expect(code).toContain("request.headers['x-dilaya-app-host']");
     // Rewrites to the existing per-app site/auth routes.
     expect(code).toContain("'/o/' + e.o + '/' + e.a + '/site'");
+    // /static/* rewrites into the tenant's key prefix in the assets bucket.
+    expect(code).toContain("'/_appstatic/' + e.o + '/' + e.a");
+  });
+
+  it("static-MODE branch: flagged hosts swap to the S3 origin (OAC sigv4) with SPA fallback; /api stays on API-GW", () => {
+    const t = build();
+    const fns = t.findResources("AWS::CloudFront::Function");
+    const [cfFn] = Object.values(fns) as any[];
+    const code = fnCodeToString(cfFn.Properties.FunctionCode);
+    // Gated on the KVS value's `s` flag.
+    expect(code).toContain("if (e.s)");
+    // Site files live under /_appsite/<org>/<app>/ in the static bucket.
+    expect(code).toContain("'/_appsite/' + e.o + '/' + e.a");
+    // SPA fallback: extensionless URI -> /index.html.
+    expect(code).toContain("'/index.html'");
+    // Origin switch to S3 with OAC sigv4 signing, custom headers reset (the
+    // API-GW origin-verify secret must never leak to S3).
+    expect(code).toContain("cf.updateRequestOrigin(");
+    expect(code).toContain('"signingProtocol": "sigv4"');
+    expect(code).toContain('"originType": "s3"');
+    expect(code).toContain('"customHeaders": {}');
+    // The S3 domain is the deployment's static bucket (a CFN token at synth —
+    // the flattened code carries the bucket's RegionalDomainName GetAtt).
+    expect(code).toContain("RegionalDomainName");
+    // /api/* on a static host keeps the API-GW origin (site JSON API).
+    expect(code).toContain("uri.indexOf('/api/') === 0");
   });
 
   it("forwards the x-dilaya-app-host header + the cookie allowlist on the content origin policy", () => {
