@@ -167,6 +167,23 @@ describe("app-content host-routing (appContentDomain set)", () => {
     expect(code).toContain("RegionalDomainName");
   });
 
+  it("canonical-redirect branch: KVS value flag `r` 301s to the target host preserving path + query, edge-cached 1h", () => {
+    const t = build();
+    const fns = t.findResources("AWS::CloudFront::Function");
+    const [cfFn] = Object.values(fns) as any[];
+    const code = fnCodeToString(cfFn.Properties.FunctionCode);
+    // The redirect check runs right after the KVS parse — BEFORE the /static
+    // and static-sections branches, so a redirecting host never serves content
+    // in any mode.
+    expect(code.indexOf("if (e.r)")).toBeGreaterThan(-1);
+    expect(code.indexOf("if (e.r)")).toBeLessThan(code.indexOf("'/_appstatic/'"));
+    // 301 to https://<r><path>?<query> (query rebuilt incl. multi-value keys).
+    expect(code).toContain("var loc = 'https://' + e.r + request.uri;");
+    expect(code).toContain("qs[k].multiValue");
+    expect(code).toContain("statusCode: 301");
+    expect(code).toContain("'cache-control': { value: 'public, max-age=3600' }");
+  });
+
   it("forwards the x-dilaya-app-host header + the cookie allowlist on the content origin policy", () => {
     const t = build();
     t.hasResourceProperties("AWS::CloudFront::OriginRequestPolicy", {
