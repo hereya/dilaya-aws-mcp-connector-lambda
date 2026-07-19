@@ -1711,17 +1711,25 @@ async function handler(event) {
               resources: ["*"],
             })
           );
-          // Each purchased domain lands as a NEW hosted zone in this account
-          // (created by the registrar, not by us) — the connector discovers it
-          // (ListHostedZonesByName) and writes the custom-domain records there
-          // itself (managed-zone mode: validation CNAMEs, routing incl. the
-          // apex ALIAS, DKIM/return-path). Zones that don't exist at deploy
-          // time can't be enumerated, so the record grant is zone-wildcard;
-          // the connector only ever addresses zones matching its own
-          // domainorder# rows.
+          // Each purchased domain lands as a NEW hosted zone in this account —
+          // and RegisterDomain creates that zone WITH THE CALLER'S credentials,
+          // so the connector needs route53:CreateHostedZone itself (proven by
+          // the first live purchase: AccessDenied on exactly that action; the
+          // registration is refused BEFORE any charge). The connector then
+          // discovers the zone (ListHostedZonesByName) and writes the
+          // custom-domain records there itself (managed-zone mode: validation
+          // CNAMEs, routing incl. the apex ALIAS, DKIM/return-path). Zones
+          // that don't exist at deploy time can't be enumerated, so these
+          // grants are wildcard; the connector only ever addresses zones
+          // matching its own domainorder# rows.
           fn.addToRolePolicy(
             new iam.PolicyStatement({
-              actions: ["route53:ListHostedZonesByName"],
+              actions: [
+                "route53:CreateHostedZone",
+                "route53:ListHostedZonesByName",
+                // CreateHostedZone returns a change id the service polls.
+                "route53:GetChange",
+              ],
               resources: ["*"],
             })
           );
