@@ -1306,11 +1306,19 @@ async function handler(event) {
     };
   }
   var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
+  // STAGING (value flag e = 's', deploy-pkg >= 0.1.30): this host serves the
+  // app's staging deployment — same app, same data, candidate CODE. Its S3
+  // folders carry a '--stg' suffix (app names never contain '-', so no
+  // collision) and its dynamic origin routes to /site-stg. /auth/* stays
+  // SHARED with production (auth is app-level; one login works on both hosts).
+  var a = e.a;
+  var siteSeg = '/site';
+  if (e.e === 's') { a = e.a + '--stg'; siteSeg = '/site-stg'; }
   // /static/* is served straight from the static-assets S3 origin (the
   // "/static/*" cache behavior matches on the VIEWER uri, then this rewrite
   // maps it to the tenant's key prefix): "/static/x" -> "/_appstatic/<org>/<app>/x"
   if (uri === '/static' || uri.indexOf('/static/') === 0) {
-    request.uri = '/_appstatic/' + e.o + '/' + e.a + uri.slice(7);
+    request.uri = '/_appstatic/' + e.o + '/' + a + uri.slice(7);
     return request;
   }
   // STATIC sections (value flag p = URI prefix list, phase 3 hybrid): paths
@@ -1331,7 +1339,7 @@ async function handler(event) {
     if (m !== null) {
       var last = uri.split('/').pop();
       var file = last.indexOf('.') >= 0 ? uri : (m === '/' ? '' : m) + '/index.html';
-      request.uri = '/_appsite/' + e.o + '/' + e.a + file;
+      request.uri = '/_appsite/' + e.o + '/' + a + file;
       cf.updateRequestOrigin({
         "domainName": "${staticAssetsBucket.bucketRegionalDomainName}",
         "originAccessControlConfig": {
@@ -1348,10 +1356,11 @@ async function handler(event) {
       return request;
     }
   }
-  // auth routes live at /o/<org>/<app>/auth/... ; everything else at /o/<org>/<app>/site/...
+  // auth routes live at /o/<org>/<app>/auth/... ; everything else at
+  // /o/<org>/<app>/site/... (production) or .../site-stg/... (staging).
   var prefix = uri === '/auth' || uri.indexOf('/auth/') === 0
       ? '/o/' + e.o + '/' + e.a
-      : '/o/' + e.o + '/' + e.a + '/site';
+      : '/o/' + e.o + '/' + e.a + siteSeg;
   request.uri = prefix + uri;             // "/o/<org>/<app>/site/e/foo"
   request.headers['x-dilaya-app-host'] = { value: host };  // carry viewer host to origin
   return request;

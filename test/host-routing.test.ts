@@ -133,10 +133,31 @@ describe("app-content host-routing (appContentDomain set)", () => {
     expect(code).not.toMatch(/JSON\.parse\(await/);
     // Tags the viewer host for the origin.
     expect(code).toContain("request.headers['x-dilaya-app-host']");
-    // Rewrites to the existing per-app site/auth routes.
-    expect(code).toContain("'/o/' + e.o + '/' + e.a + '/site'");
-    // /static/* rewrites into the tenant's key prefix in the assets bucket.
-    expect(code).toContain("'/_appstatic/' + e.o + '/' + e.a");
+    // Rewrites to the existing per-app site/auth routes (siteSeg = '/site',
+    // or '/site-stg' for staging hosts).
+    expect(code).toContain("'/o/' + e.o + '/' + e.a + siteSeg");
+    // /static/* rewrites into the tenant's key prefix in the assets bucket
+    // (`a` = the app folder name, '--stg'-suffixed on staging hosts).
+    expect(code).toContain("'/_appstatic/' + e.o + '/' + a");
+  });
+
+  it("staging branch: KVS value flag `e:'s'` suffixes the S3 folders with --stg and routes dynamic paths to /site-stg; /auth stays shared", () => {
+    const t = build();
+    const fns = t.findResources("AWS::CloudFront::Function");
+    const [cfFn] = Object.values(fns) as any[];
+    const code = fnCodeToString(cfFn.Properties.FunctionCode);
+    // One switch drives both the S3 folder suffix and the dynamic route segment.
+    expect(code).toContain("if (e.e === 's') { a = e.a + '--stg'; siteSeg = '/site-stg'; }");
+    // Defaults keep production hosts byte-identical in behavior.
+    expect(code).toContain("var a = e.a;");
+    expect(code).toContain("var siteSeg = '/site';");
+    // The staging switch sits AFTER the redirect branch (a redirecting host
+    // never serves) and BEFORE the /static rewrite (which consumes `a`).
+    const switchAt = code.indexOf("if (e.e === 's')");
+    expect(switchAt).toBeGreaterThan(code.indexOf("if (e.r)"));
+    expect(switchAt).toBeLessThan(code.indexOf("'/_appstatic/'"));
+    // Auth prefix stays env-less: one login flow serves both hosts.
+    expect(code).toContain("? '/o/' + e.o + '/' + e.a\n");
   });
 
   it("static-SECTIONS branch (hybrid): prefix-listed paths swap to the S3 origin (OAC sigv4) with per-section SPA fallback; /api + /auth always dynamic", () => {
@@ -152,9 +173,10 @@ describe("app-content host-routing (appContentDomain set)", () => {
     // Longest matching prefix wins; '/' matches everything (whole-site static).
     expect(code).toContain("pf === '/' || uri === pf || uri.indexOf(pf + '/') === 0");
     expect(code).toContain("pf.length > m.length");
-    // Site files live under /_appsite/<org>/<app>/ in the static bucket, and
-    // an extensionless URI falls back to the SECTION's index.html.
-    expect(code).toContain("'/_appsite/' + e.o + '/' + e.a");
+    // Site files live under /_appsite/<org>/<app>/ in the static bucket
+    // (app folder '--stg'-suffixed on staging hosts), and an extensionless
+    // URI falls back to the SECTION's index.html.
+    expect(code).toContain("'/_appsite/' + e.o + '/' + a");
     expect(code).toContain("(m === '/' ? '' : m) + '/index.html'");
     // Origin switch to S3 with OAC sigv4 signing, custom headers reset (the
     // API-GW origin-verify secret must never leak to S3).
