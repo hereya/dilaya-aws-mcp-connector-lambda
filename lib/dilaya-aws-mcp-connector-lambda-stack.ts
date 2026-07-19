@@ -1279,6 +1279,32 @@ async function handler(event) {
   } catch (err) {
     return request;                       // passthrough -> origin 404
   }
+  // CANONICAL REDIRECT (value flag r = target host): the host 301s to the same
+  // path+query on r instead of serving the app — rendered entirely at the edge
+  // (no Lambda), identical in static and dynamic modes. Set via
+  // set-custom-domain({ redirect_to }); the connector guarantees r is a host of
+  // the same app and never itself a redirect (no chains).
+  if (e.r) {
+    var loc = 'https://' + e.r + request.uri;
+    var qs = request.querystring;
+    var parts = [];
+    for (var k in qs) {
+      if (qs[k].multiValue) {
+        for (var j = 0; j < qs[k].multiValue.length; j++) parts.push(k + '=' + qs[k].multiValue[j].value);
+      } else {
+        parts.push(k + '=' + qs[k].value);
+      }
+    }
+    if (parts.length) loc += '?' + parts.join('&');
+    return {
+      statusCode: 301,
+      statusDescription: 'Moved Permanently',
+      headers: {
+        'location': { value: loc },
+        'cache-control': { value: 'public, max-age=3600' }
+      }
+    };
+  }
   var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
   // /static/* is served straight from the static-assets S3 origin (the
   // "/static/*" cache behavior matches on the VIEWER uri, then this rewrite
