@@ -139,17 +139,23 @@ describe("app-content host-routing (appContentDomain set)", () => {
     expect(code).toContain("'/_appstatic/' + e.o + '/' + e.a");
   });
 
-  it("static-MODE branch: flagged hosts swap to the S3 origin (OAC sigv4) with SPA fallback; /api stays on API-GW", () => {
+  it("static-SECTIONS branch (hybrid): prefix-listed paths swap to the S3 origin (OAC sigv4) with per-section SPA fallback; /api + /auth always dynamic", () => {
     const t = build();
     const fns = t.findResources("AWS::CloudFront::Function");
     const [cfFn] = Object.values(fns) as any[];
     const code = fnCodeToString(cfFn.Properties.FunctionCode);
-    // Gated on the KVS value's `s` flag.
-    expect(code).toContain("if (e.s)");
-    // Site files live under /_appsite/<org>/<app>/ in the static bucket.
+    // Gated on the KVS value's `p` prefix list; /api/* and /auth/* are
+    // excluded BEFORE prefix matching so a hybrid app keeps its Lambda API
+    // and its login flow no matter what prefixes are declared.
+    expect(code).toContain("if (e.p && e.p.length && uri !== '/api' && uri.indexOf('/api/') !== 0");
+    expect(code).toContain("uri !== '/auth' && uri.indexOf('/auth/') !== 0");
+    // Longest matching prefix wins; '/' matches everything (whole-site static).
+    expect(code).toContain("pf === '/' || uri === pf || uri.indexOf(pf + '/') === 0");
+    expect(code).toContain("pf.length > m.length");
+    // Site files live under /_appsite/<org>/<app>/ in the static bucket, and
+    // an extensionless URI falls back to the SECTION's index.html.
     expect(code).toContain("'/_appsite/' + e.o + '/' + e.a");
-    // SPA fallback: extensionless URI -> /index.html.
-    expect(code).toContain("'/index.html'");
+    expect(code).toContain("(m === '/' ? '' : m) + '/index.html'");
     // Origin switch to S3 with OAC sigv4 signing, custom headers reset (the
     // API-GW origin-verify secret must never leak to S3).
     expect(code).toContain("cf.updateRequestOrigin(");
@@ -159,8 +165,6 @@ describe("app-content host-routing (appContentDomain set)", () => {
     // The S3 domain is the deployment's static bucket (a CFN token at synth —
     // the flattened code carries the bucket's RegionalDomainName GetAtt).
     expect(code).toContain("RegionalDomainName");
-    // /api/* on a static host keeps the API-GW origin (site JSON API).
-    expect(code).toContain("uri.indexOf('/api/') === 0");
   });
 
   it("forwards the x-dilaya-app-host header + the cookie allowlist on the content origin policy", () => {

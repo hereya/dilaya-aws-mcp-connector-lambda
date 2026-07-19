@@ -1287,34 +1287,40 @@ async function handler(event) {
     request.uri = '/_appstatic/' + e.o + '/' + e.a + uri.slice(7);
     return request;
   }
-  // STATIC mode (value flag s, phase 3): the app is a pre-built site whose
-  // files live in the static bucket under /_appsite/<org>/<app>/ — swap the
-  // origin to S3 (OAC-signed) and serve /index.html for extensionless paths
-  // (SPA fallback). /api/* keeps the API-GW origin so an optionally deployed
-  // backend Lambda can serve the site's JSON API.
-  if (e.s) {
-    if (uri === '/api' || uri.indexOf('/api/') === 0) {
-      request.uri = '/o/' + e.o + '/' + e.a + '/site' + uri;
-      request.headers['x-dilaya-app-host'] = { value: host };
+  // STATIC sections (value flag p = URI prefix list, phase 3 hybrid): paths
+  // under a declared prefix serve the app's pre-built site bundle from the
+  // static bucket (/_appsite/<org>/<app>/..., OAC-signed origin swap, SPA
+  // fallback to the SECTION's index.html). Everything else — ALWAYS including
+  // /api/* and /auth/* — stays dynamic on the API-GW origin, so a hybrid app
+  // keeps its Lambda pages and its login flow. p:["/"] = whole-site static.
+  if (e.p && e.p.length && uri !== '/api' && uri.indexOf('/api/') !== 0
+      && uri !== '/auth' && uri.indexOf('/auth/') !== 0) {
+    var m = null;
+    for (var i = 0; i < e.p.length; i++) {
+      var pf = e.p[i];
+      if (pf === '/' || uri === pf || uri.indexOf(pf + '/') === 0) {
+        if (m === null || pf.length > m.length) m = pf;   // longest prefix wins
+      }
+    }
+    if (m !== null) {
+      var last = uri.split('/').pop();
+      var file = last.indexOf('.') >= 0 ? uri : (m === '/' ? '' : m) + '/index.html';
+      request.uri = '/_appsite/' + e.o + '/' + e.a + file;
+      cf.updateRequestOrigin({
+        "domainName": "${staticAssetsBucket.bucketRegionalDomainName}",
+        "originAccessControlConfig": {
+          "enabled": true,
+          "signingBehavior": "always",
+          "signingProtocol": "sigv4",
+          "originType": "s3"
+        },
+        // Reset the API-GW origin's custom headers (x-dilaya-origin-verify):
+        // unspecified settings are INHERITED from the assigned origin, and
+        // S3+OAC must see none of them.
+        "customHeaders": {}
+      });
       return request;
     }
-    var last = uri.split('/').pop();
-    var file = last.indexOf('.') >= 0 ? uri : '/index.html';
-    request.uri = '/_appsite/' + e.o + '/' + e.a + file;
-    cf.updateRequestOrigin({
-      "domainName": "${staticAssetsBucket.bucketRegionalDomainName}",
-      "originAccessControlConfig": {
-        "enabled": true,
-        "signingBehavior": "always",
-        "signingProtocol": "sigv4",
-        "originType": "s3"
-      },
-      // Reset the API-GW origin's custom headers (x-dilaya-origin-verify):
-      // unspecified settings are INHERITED from the assigned origin, and S3+OAC
-      // must see none of them.
-      "customHeaders": {}
-    });
-    return request;
   }
   // auth routes live at /o/<org>/<app>/auth/... ; everything else at /o/<org>/<app>/site/...
   var prefix = uri === '/auth' || uri.indexOf('/auth/') === 0
