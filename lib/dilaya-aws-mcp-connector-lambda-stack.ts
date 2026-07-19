@@ -1202,19 +1202,32 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           { hostedZoneId: appContentZoneId, zoneName: appContentDomain }
         );
 
-        // Viewer-request CloudFront Function. This is the BOOTSTRAP version with
-        // an EMPTY host map (`var HOSTMAP = {};`). The connector rewrites just
-        // that object literal at runtime (DescribeFunction -> UpdateFunction ->
-        // PublishFunction), keeping every other byte identical. The executable
-        // body matches the build contract exactly.
+        // Host map = DATA, not code (2026-07-19): a CloudFront KeyValueStore
+        // holds one key per vanity/BYOD host (`<host>` -> `{"o":"<orgId>",
+        // "a":"<app>"}`). The connector adds/removes KEYS at provisioning —
+        // the function CODE below never carries tenant state, so deploys that
+        // change the body can never reset the routing table (the historical
+        // `var HOSTMAP = {…};` byte-swap pattern is gone).
+        const appHostKvs = new cloudfront.KeyValueStore(this, "AppHostKvs", {
+          comment: "dilaya vanity/BYOD host -> {o,a} routing table",
+        });
+
+        // Viewer-request CloudFront Function (JS 2.0 for the KVS binding).
         const appHostRouterFn = new cloudfront.Function(this, "AppHostRouter", {
           functionName: `${appLambdaNamePrefix}apphost-router`,
-          code: cloudfront.FunctionCode.fromInline(`function handler(event) {
+          runtime: cloudfront.FunctionRuntime.JS_2_0,
+          keyValueStore: appHostKvs,
+          code: cloudfront.FunctionCode.fromInline(`import cf from 'cloudfront';
+const kvs = cf.kvs();
+async function handler(event) {
   var request = event.request;
   var host = request.headers.host.value.toLowerCase();
-  var HOSTMAP = {};
-  var e = HOSTMAP[host];
-  if (!e) return request;                 // unknown host -> passthrough -> origin 404
+  var e;
+  try {
+    e = JSON.parse(await kvs.get(host));  // unknown host -> throws
+  } catch (err) {
+    return request;                       // passthrough -> origin 404
+  }
   var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
   // /static/* is served straight from the static-assets S3 origin (the
   // "/static/*" cache behavior matches on the VIEWER uri, then this rewrite
@@ -1432,6 +1445,23 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           appContentCachePolicy.cachePolicyId
         );
         staticAssetsBucket.grantReadWrite(fn);
+        // --- Host-map KVS: the connector syncs KEYS (data plane) instead of
+        //     rewriting function code. DescribeKeyValueStore is the ETag
+        //     source every UpdateKeys call must present.
+        fn.addEnvironment("APP_HOST_KVS_ARN", appHostKvs.keyValueStoreArn);
+        fn.addToRolePolicy(
+          new iam.PolicyStatement({
+            actions: [
+              "cloudfront-keyvaluestore:DescribeKeyValueStore",
+              "cloudfront-keyvaluestore:ListKeys",
+              "cloudfront-keyvaluestore:GetKey",
+              "cloudfront-keyvaluestore:PutKey",
+              "cloudfront-keyvaluestore:DeleteKey",
+              "cloudfront-keyvaluestore:UpdateKeys",
+            ],
+            resources: [appHostKvs.keyValueStoreArn],
+          })
+        );
         fn.addEnvironment(
           "APP_CONTENT_CF_FUNCTION_ARN",
           appHostRouterFn.functionArn
