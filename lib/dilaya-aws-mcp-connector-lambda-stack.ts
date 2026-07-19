@@ -558,6 +558,21 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public domain-purchase route (NO JWT authorizer). The USER opens
+    // /o/{orgId}/{app}/domains/register (a signed single-use link minted by
+    // register-domain) to enter the registrant contacts out of band; the
+    // connector Lambda passes them straight to Route 53 Domains (never into
+    // MCP, never stored). STATIC like the other public routes; the handler
+    // validates the exact sub-path and answers 404 when the domainPurchase
+    // feature is off — the route itself is unconditional, matching the
+    // secrets/telegram pattern. Invoke permission is the api-wide
+    // HttpApiInvokeAll grant below.
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/domains/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Public MCP-connection routes (NO JWT authorizer). Two surfaces:
     //   /mcp-connections/{consent,callback} — the org-level OAuth consent flow
     //     for OUTBOUND connections to external MCP servers: `consent` is a
