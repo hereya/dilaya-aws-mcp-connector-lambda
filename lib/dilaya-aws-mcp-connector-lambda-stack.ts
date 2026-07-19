@@ -1212,55 +1212,24 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           comment: "dilaya vanity/BYOD host -> {o,a} routing table",
         });
 
-        // Viewer-request CloudFront Function (JS 2.0 for the KVS binding).
-        const appHostRouterFn = new cloudfront.Function(this, "AppHostRouter", {
-          functionName: `${appLambdaNamePrefix}apphost-router`,
-          runtime: cloudfront.FunctionRuntime.JS_2_0,
-          keyValueStore: appHostKvs,
-          code: cloudfront.FunctionCode.fromInline(`import cf from 'cloudfront';
-const kvs = cf.kvs();
-async function handler(event) {
-  var request = event.request;
-  var host = request.headers.host.value.toLowerCase();
-  var e;
-  try {
-    // NOTE: the JS 2.0 runtime rejects \`await\` inside a call ARGUMENT
-    // ("await in arguments not supported") — hoist it (prod 503, 2026-07-19).
-    var raw = await kvs.get(host);        // unknown host -> throws
-    e = JSON.parse(raw);
-  } catch (err) {
-    return request;                       // passthrough -> origin 404
-  }
-  var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
-  // /static/* is served straight from the static-assets S3 origin (the
-  // "/static/*" cache behavior matches on the VIEWER uri, then this rewrite
-  // maps it to the tenant's key prefix): "/static/x" -> "/_appstatic/<org>/<app>/x"
-  if (uri === '/static' || uri.indexOf('/static/') === 0) {
-    request.uri = '/_appstatic/' + e.o + '/' + e.a + uri.slice(7);
-    return request;
-  }
-  // auth routes live at /o/<org>/<app>/auth/... ; everything else at /o/<org>/<app>/site/...
-  var prefix = uri === '/auth' || uri.indexOf('/auth/') === 0
-      ? '/o/' + e.o + '/' + e.a
-      : '/o/' + e.o + '/' + e.a + '/site';
-  request.uri = prefix + uri;             // "/o/<org>/<app>/site/e/foo"
-  request.headers['x-dilaya-app-host'] = { value: host };  // carry viewer host to origin
-  return request;
-}`),
-        });
-
         // -------------------------------------------------------------------
         // Edge-served static assets + opt-in origin caching (2026-07-19).
         //
         // 1. A dedicated static-assets bucket: the connector extracts an app
         //    zip's `assets/` files to `_appstatic/<orgId>/<appName>/...` at
         //    deploy-backend time; the "/static/*" behavior below serves them
-        //    straight from S3 (OAC) — no Lambda in the path.
+        //    straight from S3 (OAC) — no Lambda in the path. Static-MODE apps
+        //    (phase 3) additionally keep their whole site bundle under
+        //    `_appsite/<orgId>/<appName>/...` in the SAME bucket — the router
+        //    function swaps the origin to S3 for those hosts.
         // 2. The default behavior's cache policy respects the ORIGIN's
         //    Cache-Control (opt-in per response; ttl 0 when absent, so every
         //    current response stays uncached). The frontend session cookies are
         //    part of the cache key, so an authenticated response can only ever
         //    be cached under that user's own cookie — never served cross-user.
+        //
+        // (Defined BEFORE the router function: its code interpolates the
+        // bucket's regional domain for the static-mode origin switch.)
         // -------------------------------------------------------------------
         const staticAssetsBucket = new s3.Bucket(this, "AppStaticAssetsBucket", {
           blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -1290,6 +1259,78 @@ async function handler(event) {
           origins.S3BucketOrigin.withOriginAccessControl(staticAssetsBucket, {
             originAccessControl: staticAssetsOac,
           });
+
+        // Viewer-request CloudFront Function (JS 2.0 for the KVS binding).
+        const appHostRouterFn = new cloudfront.Function(this, "AppHostRouter", {
+          functionName: `${appLambdaNamePrefix}apphost-router`,
+          runtime: cloudfront.FunctionRuntime.JS_2_0,
+          keyValueStore: appHostKvs,
+          code: cloudfront.FunctionCode.fromInline(`import cf from 'cloudfront';
+const kvs = cf.kvs();
+async function handler(event) {
+  var request = event.request;
+  var host = request.headers.host.value.toLowerCase();
+  var e;
+  try {
+    // NOTE: the JS 2.0 runtime rejects \`await\` inside a call ARGUMENT
+    // ("await in arguments not supported") — hoist it (prod 503, 2026-07-19).
+    var raw = await kvs.get(host);        // unknown host -> throws
+    e = JSON.parse(raw);
+  } catch (err) {
+    return request;                       // passthrough -> origin 404
+  }
+  var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
+  // /static/* is served straight from the static-assets S3 origin (the
+  // "/static/*" cache behavior matches on the VIEWER uri, then this rewrite
+  // maps it to the tenant's key prefix): "/static/x" -> "/_appstatic/<org>/<app>/x"
+  if (uri === '/static' || uri.indexOf('/static/') === 0) {
+    request.uri = '/_appstatic/' + e.o + '/' + e.a + uri.slice(7);
+    return request;
+  }
+  // STATIC sections (value flag p = URI prefix list, phase 3 hybrid): paths
+  // under a declared prefix serve the app's pre-built site bundle from the
+  // static bucket (/_appsite/<org>/<app>/..., OAC-signed origin swap, SPA
+  // fallback to the SECTION's index.html). Everything else — ALWAYS including
+  // /api/* and /auth/* — stays dynamic on the API-GW origin, so a hybrid app
+  // keeps its Lambda pages and its login flow. p:["/"] = whole-site static.
+  if (e.p && e.p.length && uri !== '/api' && uri.indexOf('/api/') !== 0
+      && uri !== '/auth' && uri.indexOf('/auth/') !== 0) {
+    var m = null;
+    for (var i = 0; i < e.p.length; i++) {
+      var pf = e.p[i];
+      if (pf === '/' || uri === pf || uri.indexOf(pf + '/') === 0) {
+        if (m === null || pf.length > m.length) m = pf;   // longest prefix wins
+      }
+    }
+    if (m !== null) {
+      var last = uri.split('/').pop();
+      var file = last.indexOf('.') >= 0 ? uri : (m === '/' ? '' : m) + '/index.html';
+      request.uri = '/_appsite/' + e.o + '/' + e.a + file;
+      cf.updateRequestOrigin({
+        "domainName": "${staticAssetsBucket.bucketRegionalDomainName}",
+        "originAccessControlConfig": {
+          "enabled": true,
+          "signingBehavior": "always",
+          "signingProtocol": "sigv4",
+          "originType": "s3"
+        },
+        // Reset the API-GW origin's custom headers (x-dilaya-origin-verify):
+        // unspecified settings are INHERITED from the assigned origin, and
+        // S3+OAC must see none of them.
+        "customHeaders": {}
+      });
+      return request;
+    }
+  }
+  // auth routes live at /o/<org>/<app>/auth/... ; everything else at /o/<org>/<app>/site/...
+  var prefix = uri === '/auth' || uri.indexOf('/auth/') === 0
+      ? '/o/' + e.o + '/' + e.a
+      : '/o/' + e.o + '/' + e.a + '/site';
+  request.uri = prefix + uri;             // "/o/<org>/<app>/site/e/foo"
+  request.headers['x-dilaya-app-host'] = { value: host };  // carry viewer host to origin
+  return request;
+}`),
+        });
 
         const appContentCachePolicy = new cloudfront.CachePolicy(
           this,
