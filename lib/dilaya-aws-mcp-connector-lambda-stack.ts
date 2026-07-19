@@ -85,6 +85,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // deploy. Empty → strict single-secret mode.
     const appContentOriginSecretPrevious =
       process.env["appContentOriginSecretPrevious"];
+    // Domain purchase through Dilaya (Route 53 Domains). OPTIONAL and additive:
+    // absent/false → no env, no IAM, feature fully inert connector-side (its
+    // tools answer DOMAIN_PURCHASE_NOT_CONFIGURED). Only meaningful together
+    // with appContentDomain (the purchased-domain wiring rides the BYOD flow).
+    const domainPurchase = process.env["domainPurchase"] === "true";
 
     // RFC 8707 audience binding: the connector's own /mcp resource URL. Derived
     // from customDomain so it can't be dropped (Hereya only forwards hereyavars
@@ -1661,6 +1666,61 @@ async function handler(event) {
             },
           })
         );
+
+        // --- Domain purchase through Dilaya (Route 53 Domains), opt-in via
+        //     the `domainPurchase` param. The route53domains API is GLOBAL
+        //     (us-east-1) with NO resource-level scoping and NO tag-based
+        //     ABAC — the grant is necessarily account-broad, which is why it
+        //     sits behind an explicit deploy param on top of the connector's
+        //     own per-org gate (option flag + purchase cap + allowed TLDs,
+        //     all fail-closed from org-info). Deliberately NOT granted:
+        //     TransferDomain*, DeleteDomain, UpdateDomainContact (contact
+        //     changes go through a human, not the connector).
+        if (domainPurchase) {
+          fn.addEnvironment("DOMAIN_PURCHASE_ENABLED", "true");
+          fn.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: [
+                "route53domains:CheckDomainAvailability",
+                "route53domains:ListPrices",
+                "route53domains:RegisterDomain",
+                "route53domains:GetDomainDetail",
+                "route53domains:GetOperationDetail",
+                "route53domains:ListDomains",
+                "route53domains:ListOperations",
+                "route53domains:GetContactReachabilityStatus",
+                "route53domains:ResendContactReachabilityEmail",
+                "route53domains:EnableDomainAutoRenew",
+                "route53domains:DisableDomainAutoRenew",
+              ],
+              resources: ["*"],
+            })
+          );
+          // Each purchased domain lands as a NEW hosted zone in this account
+          // (created by the registrar, not by us) — the connector discovers it
+          // (ListHostedZonesByName) and writes the custom-domain records there
+          // itself (managed-zone mode: validation CNAMEs, routing incl. the
+          // apex ALIAS, DKIM/return-path). Zones that don't exist at deploy
+          // time can't be enumerated, so the record grant is zone-wildcard;
+          // the connector only ever addresses zones matching its own
+          // domainorder# rows.
+          fn.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: ["route53:ListHostedZonesByName"],
+              resources: ["*"],
+            })
+          );
+          fn.addToRolePolicy(
+            new iam.PolicyStatement({
+              actions: [
+                "route53:ChangeResourceRecordSets",
+                "route53:ListResourceRecordSets",
+                "route53:GetHostedZone",
+              ],
+              resources: ["arn:aws:route53:::hostedzone/*"],
+            })
+          );
+        }
 
         // --- Origin-secret rotation, deploy-time: the per-org BYOD
         //     distributions are runtime-created (CloudFormation doesn't know
