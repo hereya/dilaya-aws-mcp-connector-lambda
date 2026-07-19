@@ -13,6 +13,7 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as triggers from "aws-cdk-lib/triggers";
 import * as ssmparam from "aws-cdk-lib/aws-ssm";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
@@ -1215,6 +1216,13 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
   var e = HOSTMAP[host];
   if (!e) return request;                 // unknown host -> passthrough -> origin 404
   var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
+  // /static/* is served straight from the static-assets S3 origin (the
+  // "/static/*" cache behavior matches on the VIEWER uri, then this rewrite
+  // maps it to the tenant's key prefix): "/static/x" -> "/_appstatic/<org>/<app>/x"
+  if (uri === '/static' || uri.indexOf('/static/') === 0) {
+    request.uri = '/_appstatic/' + e.o + '/' + e.a + uri.slice(7);
+    return request;
+  }
   // auth routes live at /o/<org>/<app>/auth/... ; everything else at /o/<org>/<app>/site/...
   var prefix = uri === '/auth' || uri.indexOf('/auth/') === 0
       ? '/o/' + e.o + '/' + e.a
@@ -1224,6 +1232,69 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
   return request;
 }`),
         });
+
+        // -------------------------------------------------------------------
+        // Edge-served static assets + opt-in origin caching (2026-07-19).
+        //
+        // 1. A dedicated static-assets bucket: the connector extracts an app
+        //    zip's `assets/` files to `_appstatic/<orgId>/<appName>/...` at
+        //    deploy-backend time; the "/static/*" behavior below serves them
+        //    straight from S3 (OAC) — no Lambda in the path.
+        // 2. The default behavior's cache policy respects the ORIGIN's
+        //    Cache-Control (opt-in per response; ttl 0 when absent, so every
+        //    current response stays uncached). The frontend session cookies are
+        //    part of the cache key, so an authenticated response can only ever
+        //    be cached under that user's own cookie — never served cross-user.
+        // -------------------------------------------------------------------
+        const staticAssetsBucket = new s3.Bucket(this, "AppStaticAssetsBucket", {
+          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+          enforceSSL: true,
+        });
+        // Runtime-created BYOD per-org distributions reference this same bucket
+        // + OAC (by id, via the envs below): allow ANY distribution of this
+        // account to read — CloudFront only presents a SourceArn for distros it
+        // actually serves, so this stays account-scoped.
+        staticAssetsBucket.addToResourcePolicy(
+          new iam.PolicyStatement({
+            actions: ["s3:GetObject"],
+            resources: [staticAssetsBucket.arnForObjects("*")],
+            principals: [new iam.ServicePrincipal("cloudfront.amazonaws.com")],
+            conditions: {
+              StringLike: {
+                "AWS:SourceArn": `arn:aws:cloudfront::${this.account}:distribution/*`,
+              },
+            },
+          })
+        );
+        const staticAssetsOac = new cloudfront.S3OriginAccessControl(
+          this,
+          "AppStaticAssetsOac"
+        );
+        const staticAssetsOrigin =
+          origins.S3BucketOrigin.withOriginAccessControl(staticAssetsBucket, {
+            originAccessControl: staticAssetsOac,
+          });
+
+        const appContentCachePolicy = new cloudfront.CachePolicy(
+          this,
+          "AppContentCachePolicy",
+          {
+            comment:
+              "Respect origin Cache-Control (opt-in); session cookies in the cache key",
+            minTtl: cdk.Duration.seconds(0),
+            defaultTtl: cdk.Duration.seconds(0),
+            maxTtl: cdk.Duration.days(365),
+            cookieBehavior: cloudfront.CacheCookieBehavior.allowList(
+              "dilaya_id_token",
+              "hereya_id_token",
+              "dilaya_agent"
+            ),
+            headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+            queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
+            enableAcceptEncodingGzip: true,
+            enableAcceptEncodingBrotli: true,
+          }
+        );
 
         // The origin-request policy is SHARED with the runtime-created BYOD
         // per-org distributions (the connector references it by id via
@@ -1277,7 +1348,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
               viewerProtocolPolicy:
                 cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
               allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-              cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+              cachePolicy: appContentCachePolicy,
               originRequestPolicy: appContentOriginPolicy,
               functionAssociations: [
                 {
@@ -1285,6 +1356,24 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
                   eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
                 },
               ],
+            },
+            additionalBehaviors: {
+              // Matched on the VIEWER uri; the router function (attached here
+              // too) rewrites /static/* -> /_appstatic/<org>/<app>/* so each
+              // tenant's assets resolve under its own S3 key prefix.
+              "/static/*": {
+                origin: staticAssetsOrigin,
+                viewerProtocolPolicy:
+                  cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                functionAssociations: [
+                  {
+                    function: appHostRouterFn,
+                    eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+                  },
+                ],
+              },
             },
           }
         );
@@ -1325,6 +1414,24 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
           "APP_CONTENT_ORIGIN_REQUEST_POLICY_ID",
           appContentOriginPolicy.originRequestPolicyId
         );
+        // --- Edge static assets + opt-in caching: the connector extracts app
+        //     assets/ into the static bucket at deploy-backend, and BYOD
+        //     runtime-created distributions replicate the same cache policy +
+        //     static origin/behavior (referenced by id).
+        fn.addEnvironment("APP_STATIC_BUCKET", staticAssetsBucket.bucketName);
+        fn.addEnvironment(
+          "APP_STATIC_BUCKET_DOMAIN",
+          staticAssetsBucket.bucketRegionalDomainName
+        );
+        fn.addEnvironment(
+          "APP_STATIC_OAC_ID",
+          staticAssetsOac.originAccessControlId
+        );
+        fn.addEnvironment(
+          "APP_CONTENT_CACHE_POLICY_ID",
+          appContentCachePolicy.cachePolicyId
+        );
+        staticAssetsBucket.grantReadWrite(fn);
         fn.addEnvironment(
           "APP_CONTENT_CF_FUNCTION_ARN",
           appHostRouterFn.functionArn
