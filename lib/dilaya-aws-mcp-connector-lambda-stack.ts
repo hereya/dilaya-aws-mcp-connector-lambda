@@ -1358,7 +1358,29 @@ async function handler(event) {
     }
     if (m !== null) {
       var last = uri.split('/').pop();
-      var file = last.indexOf('.') >= 0 ? uri : (m === '/' ? '' : m) + '/index.html';
+      var file;
+      if (last.indexOf('.') >= 0) {
+        file = uri;                                       // real file — exact key
+      } else {
+        // FILE-FIRST resolution (deploy-pkg >= 0.1.34): a multi-page bundle
+        // (Astro/Hugo/Next export) has site/<path>/index.html per page. The
+        // connector writes one KVS route key per such page at deploy time
+        // ('r|<org>|<folder>|<path>' -> '1', folder = app or app--stg), so the
+        // edge can serve the PAGE's index.html instead of the section's. Miss
+        // (no key, or a pre-route connector) -> the SPA fallback below, byte-
+        // identical to the historical behavior.
+        file = (m === '/' ? '' : m) + '/index.html';      // SPA fallback (section index)
+        var norm = uri.length > 1 && uri.charAt(uri.length - 1) === '/' ? uri.slice(0, -1) : uri;
+        if (norm !== '/' && norm !== m) {
+          try {
+            // JS 2.0: await must be a plain statement (never in an argument).
+            var hit = await kvs.get('r|' + e.o + '|' + a + '|' + norm);
+            if (hit) file = norm + '/index.html';
+          } catch (miss) {
+            // no such route -> keep the section fallback
+          }
+        }
+      }
       request.uri = '/_appsite/' + e.o + '/' + a + file;
       cf.updateRequestOrigin({
         "domainName": "${staticAssetsBucket.bucketRegionalDomainName}",
