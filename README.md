@@ -29,6 +29,7 @@ Static public routes (NO authorizer — self-authenticating):
   POST /o/{orgId}/{app}/telegram/webhook   → inbound Telegram (secret-token verified)
   GET/POST /o/{orgId}/{app}/telegram/setup → one-time bot-token entry form
   GET/POST /o/{orgId}/{app}/secrets/setup  → one-time integration-secret entry form
+  POST /o/{orgId}/{app}/mail/send          → app-mail gateway (Bearer = the app's DILAYA_CAPABILITY)
 ```
 
 Per-app web frontends are served at the path URL `https://<customDomain>/o/<org>/<app>/site/` (and,

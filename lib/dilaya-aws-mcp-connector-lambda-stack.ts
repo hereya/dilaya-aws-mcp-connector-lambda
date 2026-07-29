@@ -622,6 +622,20 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public app-mail gateway (NO JWT authorizer). A per-app backend Lambda
+    // sends its transactional email here (runtime `mail.send`) instead of
+    // calling Postmark itself — same DILAYA_CAPABILITY self-auth as the
+    // MCP/cron/LLM gateways. Two reasons it moved: the org's monthly email
+    // allowance is enforced connector-side (a cap the app could bypass is not
+    // a cap), and the per-app Postmark token stops being something an app
+    // Lambda has to read. The old direct path still works, so a Lambda still
+    // on the previous runtime layer keeps sending while the layer propagates.
+    httpApi.addRoutes({
+      path: "/o/{orgId}/{app}/mail/{proxy+}",
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: lambdaIntegration,
+    });
+
     // Public org-events webhook (NO JWT authorizer). dilaya.eu (the connect
     // AS) POSTs here on each org modification to invalidate the connector's
     // org-info cache for that org. Self-authenticated in the connector: the
