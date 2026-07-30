@@ -64,6 +64,21 @@ Per-app frontend Lambdas (the `frontend-authorizer` + `auth-lambda`) additionall
 read ceiling of `/dilaya/<orgId>/apps/<app>/{mail,secrets}/*` (own-app Postmark token + integration
 secrets) plus KMS-via-SSM decrypt.
 
+## The edge lambdas' Data API client
+
+`frontend-authorizer` and `auth-lambda` each hold their **own** SigV4 Data API client (`dataApiQuery`,
+node builtins only — they cannot import the connector's TypeScript one). It must therefore mirror the
+connector's `src/dataapi-client.ts` retry behaviour, and does: a **short, bounded retry** (2 extra
+attempts, 150 ms then 300 ms) on the states the VM itself calls transient — **429 / 502 / 503 / 504**
+— and on a network blip. Anything else (4xx, bad SQL, a capability denial) fails on the first attempt.
+
+Without it a few-second VM bounce (`503 UNAVAILABLE: instance is shutting down; retry shortly`) reads
+as *"this app has no auth config"*: a logged-in visitor is served as anonymous and bounced to
+`/auth/login`, and the login page can't work either — an availability bug, never an identity leak
+(the failure path grants no identity, it only withholds one). Observed for real on 2026-07-29, where
+the connector logged 0 errors through the same bounce precisely because its client retried.
+Unit-pinned for both copies in `test/dataapi-retry.test.ts`.
+
 ## Build & ship
 
 CDK (`iac: cdk`). It **synths from TypeScript via ts-node** (`cdk.json` → `npx ts-node --prefer-ts-exts
