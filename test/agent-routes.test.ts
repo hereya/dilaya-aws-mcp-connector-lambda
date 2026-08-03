@@ -163,6 +163,25 @@ describe("static public agent routes", () => {
     expect((route as any).Properties.AuthorizerId).toBeUndefined();
   });
 
+  it("exposes GET /billing/domain-orders (AS-assertion-authenticated read) with NO authorizer", () => {
+    // dilaya.eu pulls registered domains + their AWS prices from here to
+    // invoice them. It carries an AS-signed assertion, not a user token, so the
+    // JWT authorizer would reject it before the connector could verify it —
+    // this route existing WITHOUT an authorizer is what makes billing possible
+    // at all, and a regression here would silently stop every domain invoice.
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "GET /billing/domain-orders",
+      AuthorizationType: "NONE",
+    });
+    const routes = t.findResources("AWS::ApiGatewayV2::Route", {
+      Properties: { RouteKey: "GET /billing/domain-orders" },
+    });
+    const [route] = Object.values(routes);
+    expect(route).toBeDefined();
+    expect((route as any).Properties.AuthorizerId).toBeUndefined();
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {

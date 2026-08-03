@@ -649,6 +649,22 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public domain-billing read (NO JWT authorizer). dilaya.eu pulls an org's
+    // REGISTERED domain names and their AWS prices from here, to invoice them
+    // at cost + margin — only the connector knows a registration succeeded, and
+    // only its AWS account can price a TLD. Same self-authentication as the
+    // webhook above (an AS-signed RS256 assertion, verified in the connector
+    // against the AS JWKS), with the `aud` bound to THIS url so an org-events
+    // assertion cannot be replayed here.
+    //
+    // A PULL, not a push: a lost push is a domain nobody is ever charged for
+    // and nothing says so, whereas a missed read is picked up by the next one.
+    httpApi.addRoutes({
+      path: "/billing/domain-orders",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
