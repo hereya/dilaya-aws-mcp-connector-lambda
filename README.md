@@ -79,6 +79,39 @@ as *"this app has no auth config"*: a logged-in visitor is served as anonymous a
 the connector logged 0 errors through the same bounce precisely because its client retried.
 Unit-pinned for both copies in `test/dataapi-retry.test.ts`.
 
+## Alarms, and the relay that makes them audible
+
+`CapabilityRejectedAlarm` watches a metric filter on the connector's own log group
+(`"capability rejected"` → `Dilaya/Connector CapabilityRejected`, ≥1 in 5 min).
+
+⚠️ **An alarm with no action is a dashboard, not an alert.** This one shipped in 2026-07 with zero
+actions, on the idea that "the alarm state itself is the signal" — nothing polls an alarm's state, so
+its only reader was the twice-daily log sweep, i.e. exactly the ~21 h delay the alarm was built to
+remove. Worse, the task that shipped it recorded that it delivered `SNS→Telegram`. Found and closed
+by the 2026-08-08 sweep.
+
+Supply **both** inputs and the stack builds an SNS topic + an `AlarmRelay` Lambda subscribed to it,
+and wires the alarm's ALARM **and** OK actions to that topic:
+
+| input | meaning |
+|---|---|
+| `telegramBotTokenParam` | **name** of the SSM SecureString holding the bot token — never the token. May point at the `attach-telegram` credentials record (`{"bot_token":…,"secret_token":…}`); the relay extracts `bot_token`. |
+| `telegramChatId` | chat notified when an alarm flips, and when it recovers. |
+
+Either one missing → no topic, no relay, alarm unchanged. The two names are **identical to
+`dilaya/aws-sqlite-data`'s** on purpose: one pair of `-p` values in the connector's `release.yml`
+feeds both packages.
+
+⚠️ **Declare before you read.** A package only receives an input listed under `parameters:` in its
+`hereyarc.yaml`; an undeclared or renamed one is dropped **in silence** and the deploy still goes
+green — three releases were burned that way on 2026-08-07. `test/alarm-relay.test.ts` pins the names
+on both sides, plus the fact that the alarm carries actions and the topic carries a subscriber
+(each of which fails invisibly).
+
+**Verify on real prod, never on a green run:** the relay Lambda must exist, the topic must report
+≥ 1 subscription, and the alarm must be flipped for real (`aws cloudwatch set-alarm-state`) with the
+message actually arriving.
+
 ## Build & ship
 
 CDK (`iac: cdk`). It **synths from TypeScript via ts-node** (`cdk.json` → `npx ts-node --prefer-ts-exts

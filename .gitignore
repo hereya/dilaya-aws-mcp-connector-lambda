@@ -9,6 +9,11 @@ cdk.out/
 !lib/auth-lambda/**/*.js
 !lib/cognito-triggers/**/*.js
 !lib/byod-origin-restamp/index.js
+# The alarm relay is hand-written source, not build output. Without these two
+# lines the blanket `*.js` above silently leaves lib/alarm-relay empty in the
+# published package, and `Code.fromAsset` ships a Lambda with no handler.
+!lib/alarm-relay/index.js
+!lib/alarm-relay/token.js
 *.tsbuildinfo
 .DS_Store
 cdk.out/
