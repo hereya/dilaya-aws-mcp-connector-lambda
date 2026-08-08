@@ -19,6 +19,9 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
+import * as snsSubs from "aws-cdk-lib/aws-sns-subscriptions";
 import { Construct } from "constructs";
 import * as path from "path";
 import * as fs from "fs";
@@ -217,8 +220,15 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // via the log sweep (2026-07-06 bad_signature incident) — this filter+alarm
     // turns any recurrence into a metric datapoint within minutes. `fn.logGroup`
     // pre-creates/adopts /aws/lambda/<fn> so the filter never races the lazy
-    // log-group creation on a fresh stack. No alarm action wired here — the
-    // alarm state itself is the signal (SNS/email can be added later).
+    // log-group creation on a fresh stack.
+    //
+    // ⚠️ For its first month this alarm had NO action, on the theory that "the
+    // alarm state itself is the signal". It isn't: nothing polls an alarm state.
+    // The only reader was the twice-a-day log sweep — precisely the ~21h delay
+    // the alarm was created to remove, and the task that shipped it recorded
+    // "fires within minutes (SNS→Telegram)" for a chain that did not exist
+    // (found by the 2026-08-08 sweep). It now speaks through the same relay
+    // pattern that `dilaya/aws-sqlite-data` proved in prod on 2026-08-07.
     const capabilityRejectedFilter = new logs.MetricFilter(this, "CapabilityRejectedFilter", {
       logGroup: fn.logGroup,
       metricNamespace: "Dilaya/Connector",
@@ -226,7 +236,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       filterPattern: logs.FilterPattern.literal('"capability rejected"'),
       metricValue: "1",
     });
-    new cloudwatch.Alarm(this, "CapabilityRejectedAlarm", {
+    const capabilityRejectedAlarm = new cloudwatch.Alarm(this, "CapabilityRejectedAlarm", {
       metric: capabilityRejectedFilter.metric({
         period: cdk.Duration.minutes(5),
         statistic: "Sum",
@@ -239,6 +249,55 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         "Dilaya connector: Data API capability rejections (e.g. bad_signature) in the last 5 min — " +
         "see the 2026-07-06 incident; a poisoned Lambda env can hide behind poll-only traffic.",
     });
+
+    // --- Alarm → SNS → Telegram -------------------------------------------
+    // Both inputs are required; either one missing and no relay is built, which
+    // leaves the alarm exactly as it was (visible in CloudWatch, silent). The
+    // names below are read VERBATIM from the synth env — a package only ever
+    // receives an input it DECLARES under `parameters:` in hereyarc.yaml, and an
+    // undeclared one is dropped in silence while the deploy still goes green.
+    // That is what cost three releases on 2026-08-07; the two names here match
+    // `dilaya/aws-sqlite-data`'s on purpose, so the single pair of `-p` values
+    // in release.yml feeds both packages.
+    const alarmTelegramTokenParam = process.env["telegramBotTokenParam"] ?? "";
+    const alarmTelegramChatId = process.env["telegramChatId"] ?? "";
+    if (alarmTelegramTokenParam !== "" && alarmTelegramChatId !== "") {
+      const alertTopic = new sns.Topic(this, "ConnectorAlertTopic", {
+        displayName: "Dilaya connector alarms",
+      });
+      const alarmRelay = new lambda.Function(this, "AlarmRelay", {
+        runtime: lambda.Runtime.NODEJS_22_X,
+        architecture: lambda.Architecture.ARM_64,
+        handler: "index.handler",
+        code: lambda.Code.fromAsset(path.join(__dirname, "alarm-relay")),
+        timeout: cdk.Duration.seconds(30),
+        memorySize: 128,
+        environment: {
+          TELEGRAM_TOKEN_PARAM: alarmTelegramTokenParam,
+          TELEGRAM_CHAT_ID: alarmTelegramChatId,
+        },
+      });
+      alarmRelay.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["ssm:GetParameter"],
+          resources: [
+            cdk.Arn.format(
+              {
+                service: "ssm",
+                resource: "parameter",
+                resourceName: alarmTelegramTokenParam.replace(/^\//, ""),
+              },
+              this,
+            ),
+          ],
+        }),
+      );
+      alertTopic.addSubscription(new snsSubs.LambdaSubscription(alarmRelay));
+      // Both directions: an alert that never says "it's over" trains you to
+      // ignore it.
+      capabilityRejectedAlarm.addAlarmAction(new cwActions.SnsAction(alertTopic));
+      capabilityRejectedAlarm.addOkAction(new cwActions.SnsAction(alertTopic));
+    }
 
     // Attach IAM policies from dependency packages
     for (const [, value] of Object.entries(policyEnv)) {
