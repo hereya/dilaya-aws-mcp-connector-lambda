@@ -261,8 +261,9 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // in release.yml feeds both packages.
     const alarmTelegramTokenParam = process.env["telegramBotTokenParam"] ?? "";
     const alarmTelegramChatId = process.env["telegramChatId"] ?? "";
+    let alertTopic: sns.Topic | undefined;
     if (alarmTelegramTokenParam !== "" && alarmTelegramChatId !== "") {
-      const alertTopic = new sns.Topic(this, "ConnectorAlertTopic", {
+      alertTopic = new sns.Topic(this, "ConnectorAlertTopic", {
         displayName: "Dilaya connector alarms",
       });
       const alarmRelay = new lambda.Function(this, "AlarmRelay", {
@@ -293,11 +294,25 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         }),
       );
       alertTopic.addSubscription(new snsSubs.LambdaSubscription(alarmRelay));
-      // Both directions: an alert that never says "it's over" trains you to
-      // ignore it.
-      capabilityRejectedAlarm.addAlarmAction(new cwActions.SnsAction(alertTopic));
-      capabilityRejectedAlarm.addOkAction(new cwActions.SnsAction(alertTopic));
     }
+
+    // Wire an alarm to the relay, in BOTH directions — an alert that never says
+    // "it's over" trains you to ignore it. Alarms are created unconditionally
+    // (they stay visible in CloudWatch, and other subscribers remain possible);
+    // only the speaking part depends on the two inputs.
+    const alertOn = (alarm: cloudwatch.Alarm): void => {
+      if (!alertTopic) return;
+      alarm.addAlarmAction(new cwActions.SnsAction(alertTopic));
+      alarm.addOkAction(new cwActions.SnsAction(alertTopic));
+    };
+    alertOn(capabilityRejectedAlarm);
+
+    // Every function that gets an Errors/Throttles alarm at the end of the
+    // stack. Collected as they are built because several are created inside
+    // feature-conditional blocks and would otherwise be out of scope there.
+    const monitoredFunctions: { label: string; fn: lambda.Function }[] = [
+      { label: "Handler", fn },
+    ];
 
     // Attach IAM policies from dependency packages
     for (const [, value] of Object.entries(policyEnv)) {
@@ -488,6 +503,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         EXPECTED_AUDIENCE: expectedAudience,
       },
     });
+    monitoredFunctions.push({ label: "McpAuthorizer", fn: authorizerFn });
 
     const httpAuthorizer = new authorizers.HttpLambdaAuthorizer(
       "HereyaAuthorizer",
@@ -616,6 +632,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         ORGANIZATION_ID: organizationId,
       },
     });
+    monitoredFunctions.push({ label: "Prm", fn: prmLambda });
 
     httpApi.addRoutes({
       path: "/.well-known/oauth-protected-resource",
@@ -856,6 +873,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         }
       );
       frontendAuthorizerRef = frontendAuthorizerFn;
+      monitoredFunctions.push({ label: "FrontendAuthorizer", fn: frontendAuthorizerFn });
 
       // Apply the SQLite-data package IAM (Data API execute-api + registry
       // GetItem + capability-secret GetSecretValue) + S3 read so the authorizer
@@ -928,6 +946,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       }
       // Read the capability signing secret so the auth Lambda can mint tokens.
       if (capSecretEntry) capSecretEntry.secret.grantRead(authLambdaFn);
+      monitoredFunctions.push({ label: "AuthLambda", fn: authLambdaFn });
 
       // Read per-app Postmark server tokens from SSM SecureString. Multi-tenant:
       // one auth Lambda serves every org, so it needs /dilaya/<anyOrg>/apps/* —
@@ -2278,6 +2297,99 @@ function handler(event) {
       new cdk.CfnOutput(this, "ServiceUrl", {
         value: httpApi.apiEndpoint,
       });
+    }
+
+    // --- Core alarms -------------------------------------------------------
+    // Deliberately OUTSIDE the customDomain branch: whether the connector is
+    // reached by vanity domain or by raw API endpoint has nothing to do with
+    // whether its failures are noticed.
+    //
+    // Until 2026-08-08 this account held FIVE alarms in total — four on the two
+    // database VMs and the capability one — so nothing whatsoever watched
+    // `AWS/Lambda Errors`, `AWS/ApiGateway 5xx` or DynamoDB. Every instrument in
+    // the sweep recipe was read by hand, twice a day: the 10 gateway 5xx of
+    // 2026-08-05 and the 17 % CloudFront 5xx on *.dilaya-apps.eu both sat
+    // through two consecutive "prod entirely clean" sweeps before anyone saw
+    // them. These alarms close the ~12 h window between sweeps.
+    //
+    // Thresholds are calibrated on the measured baseline, not guessed: Lambda
+    // `Errors` and `Throttles` have been flat 0 since 2026-08-03, and gateway
+    // `5xx` 0 since 2026-08-05 21:03Z with the landing API as a control at 0
+    // over 7 days. Against an empirically zero floor, ">= 1 in 5 minutes" is
+    // not noisy — it is the smallest signal that means something happened.
+    for (const { label, fn: monitored } of monitoredFunctions) {
+      for (const [metricName, metric] of [
+        ["Errors", monitored.metricErrors()],
+        ["Throttles", monitored.metricThrottles()],
+      ] as const) {
+        alertOn(
+          new cloudwatch.Alarm(this, `${label}${metricName}Alarm`, {
+            metric: metric.with({
+              period: cdk.Duration.minutes(5),
+              statistic: "Sum",
+            }),
+            threshold: 1,
+            evaluationPeriods: 1,
+            comparisonOperator:
+              cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            // A function with no traffic reports no datapoint; that is silence,
+            // not failure. BREACHING here would page on every quiet night.
+            treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+            alarmDescription: `Dilaya connector: ${label} Lambda ${metricName} >= 1 in 5 min (baseline is 0).`,
+          })
+        );
+      }
+    }
+
+    // The gateway layer, which `AWS/Lambda Errors` structurally cannot see: a
+    // 502 malformed response, a refused integration or a 504 integration
+    // timeout never makes the Lambda throw. That blind spot is what hid 20 5xx
+    // over 7 days until the access log shipped on 2026-08-07.
+    alertOn(
+      new cloudwatch.Alarm(this, "HttpApi5xxAlarm", {
+        metric: new cloudwatch.Metric({
+          namespace: "AWS/ApiGateway",
+          metricName: "5xx",
+          dimensionsMap: { ApiId: httpApi.apiId },
+          period: cdk.Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription:
+          "Dilaya connector: API Gateway 5xx >= 1 in 5 min. Read the HttpApiAccessLogs group — " +
+          "integrationStatus '-' means the request never reached the integration (authorizer or " +
+          "gateway refusal); a populated integrationErrorMessage is what separates a 502 from a 504.",
+      })
+    );
+
+    // 4xx is deliberately NOT alarmed: it runs 30–85/day of pure scanner noise
+    // absorbed by tenant apps (all `int=200`). Alarming it would train everyone
+    // to ignore this topic, which is how the alarm layer dies a second time.
+
+    // DynamoDB, blind in yet another direction: a throttled or failed state
+    // write is not a Lambda error and never reaches the gateway either.
+    for (const metricName of ["SystemErrors", "ThrottledRequests"] as const) {
+      alertOn(
+        new cloudwatch.Alarm(this, `AppState${metricName}Alarm`, {
+          metric: new cloudwatch.Metric({
+            namespace: "AWS/DynamoDB",
+            metricName,
+            dimensionsMap: { TableName: appStateTable.tableName },
+            period: cdk.Duration.minutes(5),
+            statistic: "Sum",
+          }),
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator:
+            cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+          alarmDescription: `Dilaya connector: AppStateTable ${metricName} >= 1 in 5 min (baseline is 0).`,
+        })
+      );
     }
   }
 }

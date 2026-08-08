@@ -112,6 +112,35 @@ on both sides, plus the fact that the alarm carries actions and the topic carrie
 ≥ 1 subscription, and the alarm must be flipped for real (`aws cloudwatch set-alarm-state`) with the
 message actually arriving.
 
+### What is alarmed (14 alarms), and why each layer needs its own
+
+Alarms are created **unconditionally** — they stay readable in CloudWatch and other subscribers stay
+possible; only the *speaking* depends on the two inputs above.
+
+| Alarm | Threshold | The blind spot it covers |
+|---|---|---|
+| `Errors` + `Throttles`, per Lambda (5 functions → 10 alarms) | ≥ 1 / 5 min | the layer that throws |
+| `HttpApi5xx` | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
+| `AppStateTable` `SystemErrors` + `ThrottledRequests` | ≥ 1 / 5 min | a throttled state write is neither a Lambda error nor a gateway error |
+
+Thresholds are calibrated on the **measured** baseline, not guessed: Lambda `Errors`/`Throttles` have
+been flat 0 since 2026-08-03, and gateway `5xx` 0 since 2026-08-05 21:03Z with the landing API as a
+control at 0 over 7 days. Against an empirically zero floor, "≥ 1 in 5 minutes" is the smallest
+signal that means something happened, not a noisy one.
+
+`treatMissingData` is `NOT_BREACHING` everywhere — a function with no traffic reports no datapoint,
+and that is silence, not failure.
+
+**`4xx` is deliberately NOT alarmed.** It runs 30–85/day of scanner noise absorbed by tenant apps
+(all `int=200`, i.e. the tenant's own app answering). Alarming it would train everyone to ignore this
+topic, which is exactly how an alarm layer dies a second time. `ByodOriginRestamp` is likewise left
+out: it is a deploy-time trigger, so its failure fails the deploy rather than hiding in prod.
+
+`test/core-alarms.test.ts` asserts the **population**, not just individual alarms — in particular
+that *no* alarm is left without actions once the relay is configured, so a future alarm added without
+`alertOn()` fails there instead of surfacing in a sweep six weeks later. Both test files are
+mutation-checked: removing the wiring makes them fail.
+
 ## Build & ship
 
 CDK (`iac: cdk`). It **synths from TypeScript via ts-node** (`cdk.json` → `npx ts-node --prefer-ts-exts
