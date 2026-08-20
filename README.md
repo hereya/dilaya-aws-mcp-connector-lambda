@@ -120,7 +120,7 @@ possible; only the *speaking* depends on the two inputs above.
 | Alarm | Threshold | The blind spot it covers |
 |---|---|---|
 | `Errors` + `Throttles`, per Lambda (5 functions → 10 alarms) | ≥ 1 / 5 min | the layer that throws |
-| `HttpApi5xx` | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
+| `HttpApiPlatform5xx` (metric math: `HttpApi5xx - HttpApi5xxTenantApp`) | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
 | `AppStateTable` `SystemErrors` + `ThrottledRequests` | ≥ 1 / 5 min | a throttled state write is neither a Lambda error nor a gateway error |
 
 Thresholds are calibrated on the **measured** baseline, not guessed: Lambda `Errors`/`Throttles` have
@@ -130,6 +130,33 @@ signal that means something happened, not a noisy one.
 
 `treatMissingData` is `NOT_BREACHING` everywhere — a function with no traffic reports no datapoint,
 and that is silence, not failure.
+
+**The gateway 5xx alarm counts only the 5xx that are OURS.** The gateway is shared by every tenant
+site and backend, so the raw `AWS/ApiGateway 5xx` metric counts a client's app failing on its own
+routes as a platform incident. That is not theory: over 30 days and 26 alarms, the *only* unplanned
+firing was this alarm, 4× on 2026-08-14, on 10 requests that all carried `int=200` on
+`…/komlaba/site-stg/…` — a client's pre-production site returning 500 on two of its own routes.
+
+Two metric filters over the access log answer "whose?", and the alarm is their difference:
+
+| Metric (`Dilaya/Connector`) | Filter pattern | Meaning |
+|---|---|---|
+| `HttpApi5xx` | `{ $.status = "5*" }` | every 5xx the gateway served |
+| `HttpApi5xxTenantApp` | `{ $.status = "5*" && $.integrationStatus = "200" && $.routeKey = "*/site*" }` | the tenant's own app answered 500 |
+
+Both signals are required. `integrationStatus = 200` alone would also swallow **our** handler's own
+500s (they answer normally too) — trading a noisy alarm for a blind one; the `…/site…` route keys are
+the only ones wired straight to an `app-app-*` Lambda. Values are matched as **strings**, because
+that is how the access log writes them (`"status":"500"`) — a numeric comparison matches nothing and
+leaves an alarm that looks healthy and never fires. Both filters carry `DefaultValue: 0`, without
+which a period with no tenant 5xx has no datapoint and the subtraction is *dropped* rather than
+evaluated. The two filters read the **same** log events on purpose: pairing one with the gateway's
+own metric would let ingestion skew invent a difference across a period boundary.
+
+A tenant integration that times out or is refused (`int != 200`) still counts as ours — the gateway
+could not get a normal answer, and that is a platform question until proven otherwise. Alerting the
+org that owns a failing app is a separate, unbuilt concern; `HttpApi5xxTenantApp` is its raw
+material.
 
 **`4xx` is deliberately NOT alarmed.** It runs 30–85/day of scanner noise absorbed by tenant apps
 (all `int=200`, i.e. the tenant's own app answering). Alarming it would train everyone to ignore this
