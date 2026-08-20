@@ -79,6 +79,23 @@ as *"this app has no auth config"*: a logged-in visitor is served as anonymous a
 the connector logged 0 errors through the same bounce precisely because its client retried.
 Unit-pinned for both copies in `test/dataapi-retry.test.ts`.
 
+## The state table's recovery path
+
+`AppStateTable` started life as cheap "is there something new?" flags, and the comment above it still
+said so long after it had stopped being true: it holds the **agent definitions** (the hand-written
+prompt, the wake signal, the poll token) and the **consumption ledgers billing reads** (`usage#`,
+`usageorg#`, `quota#`, `llmspend#`, `mailcount#`), plus the agent inboxes and the Telegram bot config.
+On 2026-08-20 it was the largest table on the platform and had **PITR disabled + `RemovalPolicy.DESTROY`**,
+while `RegistryTable` — created by our other package, `dilaya/aws-sqlite-data` — had PITR + RETAIN.
+With no on-demand backup and no AWS Backup plan anywhere in the account, that left it with **no
+recovery path at all**: one bad write, failed migration or destroyed stack and the prompts and the
+billing counters were gone, not recoverable even by a minute.
+
+Both tables here now carry `pointInTimeRecoverySpecification`, and `AppStateTable` carries `RETAIN`
+(the OTP table keeps `DESTROY` — nothing in it outlives a login attempt). PITR costs ~0.20 $/GB/month,
+i.e. ~0.13 $/month at the state table's size. `test/table-recoverability.test.ts` asserts the
+**population**: a table added later without PITR fails there rather than in a sweep six weeks later.
+
 ## Alarms, and the relay that makes them audible
 
 `CapabilityRejectedAlarm` watches a metric filter on the connector's own log group

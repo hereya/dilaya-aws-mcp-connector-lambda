@@ -437,6 +437,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       sortKey: { name: "email", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: "ttl",
+      // PITR for consistency with every other table this package owns (the
+      // contents are TTL'd one-time codes, so it stays empty and this costs
+      // nothing). RemovalPolicy stays DESTROY on purpose: nothing here outlives
+      // a login attempt, so there is nothing to retain.
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
@@ -1284,15 +1289,26 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     }
 
     // -----------------------------------------------------------------------
-    // Per-app lightweight state table (DynamoDB, on-demand). Used for cheap
-    // "is there something new?" flags so polling loops don't have to query
-    // Aurora (which would keep it from scaling to zero). Org-scoped (one table
-    // per deployment); items are keyed per app via the partition key.
+    // Per-app state table (DynamoDB, on-demand). It started as cheap
+    // "is there something new?" flags so polling loops wouldn't have to query
+    // the database — but it grew: it now also holds the agent definitions
+    // (`agent#…`: the hand-written prompt, the wake signal, the poll token) and
+    // the consumption ledgers billing reads (`usage#…`, `usageorg#…`,
+    // `quota#…`, `llmspend#…`, `mailcount#…`), plus the agent inboxes
+    // (`notif#…`) and the Telegram bot config. Org-scoped (one table per
+    // deployment); items are keyed per app via the partition key.
+    //
+    // Hence PITR + RETAIN, matching `dilaya/aws-sqlite-data`'s RegistryTable:
+    // a bad write, a failed migration or a destroyed stack would otherwise take
+    // the prompts and the billing counters with it, with no way back — not even
+    // by a minute (no on-demand backup and no AWS Backup plan exists in the
+    // account). ~0.13 $/month at the table's current size.
     // -----------------------------------------------------------------------
     const appStateTable = new dynamodb.Table(this, "AppStateTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
     fn.addEnvironment("APP_STATE_TABLE", appStateTable.tableName);
     appStateTable.grantReadWriteData(fn);
