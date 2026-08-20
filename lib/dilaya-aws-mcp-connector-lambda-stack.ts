@@ -1307,7 +1307,16 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     const appStateTable = new dynamodb.Table(this, "AppStateTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      // Three distinct protections, each closing a hole the others leave open:
+      // PITR restores corrupted CONTENTS of a table that still exists; RETAIN
+      // keeps the table when the STACK goes away; deletion protection makes AWS
+      // refuse a direct DeleteTable (console, CLI, a stray script) until the
+      // flag is cleared in a separate deliberate step. This table carries the
+      // agent definitions (hand-written prompts) and the usage counters billing
+      // reads, so all three are warranted. Trade-off accepted: retiring this
+      // table for real now needs the flag cleared by hand first.
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      deletionProtection: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
     fn.addEnvironment("APP_STATE_TABLE", appStateTable.tableName);
