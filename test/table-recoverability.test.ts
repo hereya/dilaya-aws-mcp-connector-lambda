@@ -73,4 +73,33 @@ describe("DynamoDB recoverability posture", () => {
     expect(resource.DeletionPolicy).toBe("Retain");
     expect(resource.UpdateReplacePolicy).toBe("Retain");
   });
+
+  // The third protection, and the only one that stops a DIRECT DeleteTable:
+  // PITR restores contents of a table that still exists, RETAIN only applies
+  // when the stack itself goes away. Asked for explicitly on 2026-08-20.
+  it("locks the state table against a direct delete", () => {
+    const tables = template().findResources("AWS::DynamoDB::Table");
+    const stateTable = Object.entries(tables).find(([id]) =>
+      id.startsWith("AppStateTable")
+    );
+    expect(stateTable).toBeDefined();
+
+    const [, resource] = stateTable!;
+    expect(resource.Properties?.DeletionProtectionEnabled).toBe(true);
+  });
+
+  // Deliberately NOT a population assertion: the OTP table holds TTL'd one-time
+  // codes and is DESTROY on purpose, so a lock there would block the ordinary
+  // teardown of a stack. Only stores that outlive a request get locked.
+  it("leaves the ephemeral OTP table unlocked", () => {
+    const tables = template().findResources("AWS::DynamoDB::Table");
+    const otpTable = Object.entries(tables).find(([id]) =>
+      id.startsWith("AppAuthOtpTable")
+    );
+    expect(otpTable).toBeDefined();
+
+    const [, resource] = otpTable!;
+    expect(resource.Properties?.DeletionProtectionEnabled).toBeUndefined();
+    expect(resource.DeletionPolicy).toBe("Delete");
+  });
 });
