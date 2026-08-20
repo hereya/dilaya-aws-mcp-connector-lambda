@@ -584,6 +584,71 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       detailedMetricsEnabled: true,
     };
 
+    // --- Whose 5xx is it? (2026-08-20 sweep finding) -----------------------
+    // The API-level `AWS/ApiGateway 5xx` metric counts every 5xx on this
+    // gateway, which is SHARED by every tenant site and backend. Over 30 days
+    // of alarm history exactly one alarm ever fired for real — the 5xx one, 4
+    // times on 2026-08-14 — and it was not us: the 10 requests behind it all
+    // carried `int=200` on `…/komlaba/site-stg/…`, i.e. a client's
+    // PRE-PRODUCTION site returning 500 on two of its own routes. Nothing of
+    // ours had misbehaved. An alarm that cries wolf for someone else's bug is
+    // how the only real-time alert this platform has gets ignored, and a
+    // genuine failure of ours would have looked exactly the same.
+    //
+    // The discriminant is already written down in the access log, twice over:
+    //   * `integrationStatus = 200` — the integration ANSWERED normally, so the
+    //     5xx is the payload it chose to return, not a gateway fault;
+    //   * the route key — tenant `…/site…` routes integrate DIRECTLY with the
+    //     app's own `app-app-*` Lambda, and they are the only routes carrying
+    //     `/site`. Every platform route is `/mcp`, `/mcp-connections`,
+    //     `/org-events`, `/billing/…`, `/.well-known/…`, the connector's own
+    //     `…/auth/…`, or `/o/{orgId}/{app}/{agent,telegram,secrets,domains,
+    //     cron,llm,mail}/…`.
+    // BOTH together — and only both — mean "the client's app answered 500".
+    // Everything else is ours, including our own handler returning a 500 with
+    // `int=200`: filtering on `integrationStatus` alone would have traded a
+    // noisy alarm for a blind one.
+    //
+    // Two filters over the SAME log events, subtracted at the alarm. Deriving
+    // both from one stream is deliberate — pairing a log-derived count with the
+    // gateway's own metric would let ingestion skew push one hit into the next
+    // period and invent a difference out of nothing.
+    const httpApi5xxAllFilter = new logs.MetricFilter(
+      this,
+      "HttpApi5xxAllFilter",
+      {
+        logGroup: accessLogGroup,
+        metricNamespace: "Dilaya/Connector",
+        metricName: "HttpApi5xx",
+        // Access-log values are JSON *strings* (`"status":"500"`), so this is a
+        // wildcard string match — a numeric comparison would match nothing.
+        filterPattern: logs.FilterPattern.literal('{ $.status = "5*" }'),
+        metricValue: "1",
+        // Without a default, a period with no match has no datapoint at all and
+        // `total - tenantApp` is DROPPED for that period rather than evaluated
+        // — which would silently disarm the alarm below in exactly the case it
+        // exists for (a platform 5xx in a period with no tenant 5xx).
+        defaultValue: 0,
+      }
+    );
+    // Not alarmed on here, on purpose: a client's own 500 is the client's to
+    // fix, and alerting the org that owns the app is its own problem. What this
+    // metric does is make that population countable instead of invisible.
+    const httpApi5xxTenantAppFilter = new logs.MetricFilter(
+      this,
+      "HttpApi5xxTenantAppFilter",
+      {
+        logGroup: accessLogGroup,
+        metricNamespace: "Dilaya/Connector",
+        metricName: "HttpApi5xxTenantApp",
+        filterPattern: logs.FilterPattern.literal(
+          '{ $.status = "5*" && $.integrationStatus = "200" && $.routeKey = "*/site*" }'
+        ),
+        metricValue: "1",
+        defaultValue: 0,
+      }
+    );
+
     const lambdaIntegration = new integrations.HttpLambdaIntegration(
       "LambdaIntegration",
       fn
@@ -2345,14 +2410,28 @@ function handler(event) {
     // 502 malformed response, a refused integration or a 504 integration
     // timeout never makes the Lambda throw. That blind spot is what hid 20 5xx
     // over 7 days until the access log shipped on 2026-08-07.
+    //
+    // Scoped to OUR 5xx by subtracting the tenant-app population (see the two
+    // metric filters on the access log, above). A tenant timing out or refusing
+    // its integration still counts as ours — `int != 200` means the gateway
+    // could not get a normal answer, and that is a platform question until
+    // proven otherwise.
     alertOn(
-      new cloudwatch.Alarm(this, "HttpApi5xxAlarm", {
-        metric: new cloudwatch.Metric({
-          namespace: "AWS/ApiGateway",
-          metricName: "5xx",
-          dimensionsMap: { ApiId: httpApi.apiId },
+      new cloudwatch.Alarm(this, "HttpApiPlatform5xxAlarm", {
+        metric: new cloudwatch.MathExpression({
+          expression: "total - tenantApp",
+          usingMetrics: {
+            total: httpApi5xxAllFilter.metric({
+              period: cdk.Duration.minutes(5),
+              statistic: "Sum",
+            }),
+            tenantApp: httpApi5xxTenantAppFilter.metric({
+              period: cdk.Duration.minutes(5),
+              statistic: "Sum",
+            }),
+          },
           period: cdk.Duration.minutes(5),
-          statistic: "Sum",
+          label: "Gateway 5xx that are ours",
         }),
         threshold: 1,
         evaluationPeriods: 1,
@@ -2360,9 +2439,12 @@ function handler(event) {
           cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
         alarmDescription:
-          "Dilaya connector: API Gateway 5xx >= 1 in 5 min. Read the HttpApiAccessLogs group — " +
-          "integrationStatus '-' means the request never reached the integration (authorizer or " +
-          "gateway refusal); a populated integrationErrorMessage is what separates a 502 from a 504.",
+          "Dilaya connector: platform-origin API Gateway 5xx >= 1 in 5 min (a tenant app answering " +
+          "500 on its own /site route is excluded — see HttpApi5xxTenantApp). Read the " +
+          "HttpApiAccessLogs group: integrationStatus '-' means the request never reached the " +
+          "integration (authorizer or gateway refusal); a populated integrationErrorMessage is what " +
+          "separates a 502 from a 504; integrationStatus 200 on a platform route means our own " +
+          "handler chose to return that 5xx.",
       })
     );
 
