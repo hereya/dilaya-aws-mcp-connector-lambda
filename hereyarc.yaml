@@ -1,5 +1,5 @@
 name: dilaya/aws-mcp-connector-lambda
-version: 0.1.49
+version: 0.1.50
 description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Also serves the static, no-authorizer agent-loop, Telegram, and integration-secret setup routes (/o/{orgId}/{app}/{agent,telegram,secrets}/{proxy+}), plus the outbound MCP-connection surfaces: /mcp-connections/{proxy+} (OAuth consent + fixed DCR callback) and /o/{orgId}/{app}/mcp/{proxy+} (the capability-authenticated gateway app backends call granted external-MCP tools through — connection tokens at /dilaya/*/mcp/*, connector-only, outside the per-app boundary), plus /o/{orgId}/{app}/cron/{proxy+} (capability-authenticated app-cron gateway) and the app-cron EventBridge Scheduler layer: one schedule group ('<stack>-app-crons') + an invoke role (scheduler.amazonaws.com → app Lambdas only) that the connector passes when creating schedules (scheduler CRUD scoped to the group, PassRole pinned to the Scheduler service, per-app boundary untouched); SSM secret access is multi-tenant (/dilaya/*/apps/*), isolation enforced in code. The per-app Lambda permissions boundary additionally allows own-app mail/secrets SSM reads (/dilaya/*/apps/*/{mail,secrets}/*) + KMS-via-SSM decrypt. When appContentDomain is set, provisions the app-content-domain edge layer: a CloudFront distribution (*.appContentDomain, wildcard cert + DNS) with a viewer-request Function that host-routes flat vanity hosts <app>--<orgslug>.appContentDomain to the per-app site/auth routes (tagging x-dilaya-app-host), plus auth-lambda vanity-host cookie/redirect awareness — inert without appContentDomain. Forked from hereya/aws-mcp-app-lambda."
 visibility: private
 iac: cdk
@@ -37,5 +37,22 @@ parameters:
     default: ""
   telegramChatId:
     description: "Chat id Telegram prévenu quand une alarme du connecteur bascule (et quand elle se rétablit). DOIT être fourni avec telegramBotTokenParam — les deux conditionnent la création du relais."
+    mandatory: false
+    default: ""
+  # Réveil de l'agent d'exploitation sur alarme. Telegram prévient Jonatan ; ceci
+  # prévient l'AGENT, dont le seul signal de réveil est une notification non lue
+  # dans sa boîte. Le 2026-08-24 les deux alarmes plateforme ont basculé 4 fois
+  # chacune, le relais a livré ses 16 transitions sans erreur, et rien ne s'est
+  # produit pendant 28 h. ⚠️ Les DEUX sont nécessaires — le relais n'obtient le
+  # droit d'invoquer le connecteur, et le connecteur ne reçoit sa destination,
+  # que si les deux sont non vides. Ce ne sont PAS des littéraux dans la source
+  # du connecteur : une seule installation sert tous les locataires, donc y
+  # graver notre org serait une verrue permanente.
+  alarmInboxOrg:
+    description: "Id de l'organisation dont l'agent code reçoit les alarmes de la plateforme. L'enveloppe d'alarme ne porte AUCUN sélecteur de locataire : la destination vient d'ici, jamais de l'appelant. Vide (défaut) → le réveil reste éteint et le connecteur refuse toute enveloppe d'alarme (jamais de repli silencieux). DOIT être fourni avec alarmInboxApp."
+    mandatory: false
+    default: ""
+  alarmInboxApp:
+    description: "Nom de l'app dont l'agent code reçoit les alarmes de la plateforme (p. ex. l'app de suivi de développement). DOIT être fourni avec alarmInboxOrg — les deux conditionnent le câblage du réveil."
     mandatory: false
     default: ""
