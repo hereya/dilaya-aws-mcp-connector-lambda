@@ -261,6 +261,12 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // in release.yml feeds both packages.
     const alarmTelegramTokenParam = process.env["telegramBotTokenParam"] ?? "";
     const alarmTelegramChatId = process.env["telegramChatId"] ?? "";
+    // The ops agent's inbox. Deliberately NOT literals in the connector's source:
+    // baking one tenant's identity into product code would be a permanent wart on
+    // a single deployment that serves everyone. Absent → the wake half stays off
+    // and the connector REFUSES any alarm envelope (never a silent default).
+    const alarmInboxOrg = process.env["alarmInboxOrg"] ?? "";
+    const alarmInboxApp = process.env["alarmInboxApp"] ?? "";
     let alertTopic: sns.Topic | undefined;
     if (alarmTelegramTokenParam !== "" && alarmTelegramChatId !== "") {
       alertTopic = new sns.Topic(this, "ConnectorAlertTopic", {
@@ -276,8 +282,20 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         environment: {
           TELEGRAM_TOKEN_PARAM: alarmTelegramTokenParam,
           TELEGRAM_CHAT_ID: alarmTelegramChatId,
+          // Waking the ops agent is the OTHER half of an alarm: Telegram tells
+          // Jonatan, this tells the agent. Empty (both params absent) → the
+          // relay keeps its Telegram-only behaviour, so the two halves can ship
+          // independently. See lib/alarm-relay/wake.js.
+          CONNECTOR_FUNCTION_NAME: alarmInboxOrg !== "" && alarmInboxApp !== "" ? fn.functionName : "",
         },
       });
+      // The ONLY new right, and it points one way: the relay may invoke the
+      // connector. It carries no org and no app in its payload — the connector
+      // holds the destination in its own configuration — so this grant cannot
+      // reach a tenant's inbox even if the relay is compromised.
+      if (alarmInboxOrg !== "" && alarmInboxApp !== "") {
+        fn.grantInvoke(alarmRelay);
+      }
       alarmRelay.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ["ssm:GetParameter"],
@@ -1339,6 +1357,14 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     });
     fn.addEnvironment("APP_STATE_TABLE", appStateTable.tableName);
     appStateTable.grantReadWriteData(fn);
+
+    // Where a platform alarm lands. Set ONLY when both are configured: the
+    // connector refuses an alarm envelope rather than defaulting, so a
+    // half-configured deploy fails loudly instead of writing nowhere.
+    if (alarmInboxOrg !== "" && alarmInboxApp !== "") {
+      fn.addEnvironment("ALARM_INBOX_ORG", alarmInboxOrg);
+      fn.addEnvironment("ALARM_INBOX_APP", alarmInboxApp);
+    }
 
     // The frontend authorizer reads the per-app agent-session HMAC secret
     // (`appsecret#<orgId>#<app>`, written by the connector's ensureAppSecret) to

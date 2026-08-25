@@ -48,6 +48,8 @@ describe("connector alarm → SNS → Telegram relay", () => {
     delete process.env.organizationId;
     delete process.env.telegramBotTokenParam;
     delete process.env.telegramChatId;
+    delete process.env.alarmInboxOrg;
+    delete process.env.alarmInboxApp;
     for (const [k, v] of Object.entries(env)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -312,5 +314,108 @@ describe("connector alarm → SNS → Telegram relay", () => {
         )
       ).toBeUndefined();
     });
+  });
+
+  // --- Waking the ops agent (2026-08-25) ------------------------------------
+  // The wake is wired ONLY when both inputs are present. Half-configured must
+  // stay OFF rather than half-on: an undeclared/absent package parameter is
+  // dropped in silence while the deploy still goes green (three wasted
+  // releases, 2026-08-07), and the connector refuses an alarm envelope rather
+  // than defaulting — so a partial wiring would fail on every alarm instead.
+  const INBOX = { alarmInboxOrg: "88120129-295f-476c-b1e1-382ecbc7381a", alarmInboxApp: "dilayadev" };
+
+  function relayEnv(t: Template): Record<string, unknown> {
+    const fns = t.findResources("AWS::Lambda::Function", {
+      Properties: { Environment: { Variables: { TELEGRAM_CHAT_ID: Match.anyValue() } } },
+    });
+    expect(Object.keys(fns)).toHaveLength(1);
+    return Object.values(fns)[0].Properties.Environment.Variables;
+  }
+
+  test("with the inbox configured: the relay may invoke the connector, and knows its name", () => {
+    const t = template({ ...BOTH, ...INBOX });
+    expect(relayEnv(t).CONNECTOR_FUNCTION_NAME).toBeDefined();
+    expect(relayEnv(t).CONNECTOR_FUNCTION_NAME).not.toBe("");
+
+    // The grant exists and points ONE way: relay → connector.
+    const policies = t.findResources("AWS::IAM::Policy");
+    const invokes = Object.values(policies).flatMap((p: any) =>
+      p.Properties.PolicyDocument.Statement.filter(
+        (st: any) => String(st.Action).includes("lambda:InvokeFunction")
+      )
+    );
+    expect(invokes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("with the inbox configured: the CONNECTOR is told where alarms land", () => {
+    const t = template({ ...BOTH, ...INBOX });
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      Environment: {
+        Variables: Match.objectLike({
+          ALARM_INBOX_ORG: INBOX.alarmInboxOrg,
+          ALARM_INBOX_APP: INBOX.alarmInboxApp,
+        }),
+      },
+    });
+  });
+
+  test("only ONE half configured → the wake stays entirely off", () => {
+    for (const half of [{ alarmInboxOrg: INBOX.alarmInboxOrg }, { alarmInboxApp: INBOX.alarmInboxApp }]) {
+      const t = template({ ...BOTH, ...half });
+      expect(relayEnv(t).CONNECTOR_FUNCTION_NAME).toBe("");
+      // and the connector is not handed a half-destination
+      const fns = t.findResources("AWS::Lambda::Function", {
+        Properties: { Environment: { Variables: Match.objectLike({ ALARM_INBOX_ORG: Match.anyValue() }) } },
+      });
+      expect(Object.keys(fns)).toHaveLength(0);
+    }
+  });
+
+  test("no inbox configured → today's behaviour, Telegram only", () => {
+    const t = template(BOTH);
+    expect(relayEnv(t).CONNECTOR_FUNCTION_NAME).toBe("");
+  });
+});
+
+// --- The wake half (2026-08-25) --------------------------------------------
+// Telegram tells Jonatan; the wake tells the AGENT. These pin the envelope's
+// shape, because the connector refuses anything that carries a tenant selector
+// — a "helpful" org field added here would break the wake, loudly, in prod.
+describe("alarm-relay wake envelope", () => {
+  const { envelopeFor } = require("../lib/alarm-relay/wake.js");
+
+  const alarm = (over = {}) => ({
+    AlarmName: "p-e75e2b77-f895-4255-842d-f15612462041-HandlerErrorsAlarm",
+    NewStateValue: "ALARM",
+    StateChangeTime: "2026-08-24T10:05:33.722+0000",
+    NewStateReason: "Threshold Crossed: 1 datapoint [3.0]",
+    ...over,
+  });
+
+  it("carries exactly four fields, and NONE of them names a tenant", () => {
+    const e = envelopeFor(alarm());
+    expect(Object.keys(e).sort()).toEqual(["__dilaya", "alarmName", "at", "state"]);
+  });
+
+  it("does not forward AWS's free text", () => {
+    expect(JSON.stringify(envelopeFor(alarm()))).not.toContain("Threshold Crossed");
+  });
+
+  it("maps the state change time to epoch millis", () => {
+    expect(envelopeFor(alarm()).at).toBe(Date.parse("2026-08-24T10:05:33.722+0000"));
+  });
+
+  it("relays the three real states", () => {
+    for (const s of ["ALARM", "OK", "INSUFFICIENT_DATA"]) {
+      expect(envelopeFor(alarm({ NewStateValue: s })).state).toBe(s);
+    }
+  });
+
+  // UNKNOWN is this relay's own JSON.parse fallback, not a CloudWatch state:
+  // sending it would only earn a refusal from the connector.
+  it("declines to wake on a non-transition or a nameless alarm", () => {
+    expect(envelopeFor(alarm({ NewStateValue: "UNKNOWN" }))).toBeNull();
+    expect(envelopeFor(alarm({ AlarmName: "" }))).toBeNull();
+    expect(envelopeFor(alarm({ AlarmName: undefined }))).toBeNull();
   });
 });
