@@ -201,4 +201,124 @@ describe("connector core alarms", () => {
   test("4xx is deliberately not alarmed", () => {
     expect(alarmsBy(template(WIRED), "4xx")).toHaveLength(0);
   });
+
+  // --- Volume (2026-08-27) ----------------------------------------------
+  // Every alarm above counts FAILURES, and on 2026-08-27 that turned out to
+  // be one shared blind spot rather than several: a single browser called one
+  // tenant route 17 386 times in under two hours (10-19 req/s, sustained,
+  // ~70 % of the day's connector traffic) and EVERY request answered 200.
+  // Lambda Errors 0, gateway 5xx 0, CloudFront 5xxErrorRate 0 %, VM heartbeat
+  // 60/60 — all 32 alarms in the account structurally silent, because not one
+  // of them looks at a volume. The only witness was the invocation count,
+  // which nobody reads between two sweeps.
+  test("something watches VOLUME, not only failure", () => {
+    expect(alarmsBy(template(WIRED), "Invocations")).toHaveLength(1);
+  });
+
+  // The frontend authorizer is the one place that sees every tenant site/auth
+  // request (authorizerResultTtlInSeconds: 0 — no caching, so one invocation
+  // per request), and that traffic is the only UNBOUNDED population here:
+  // it is public browser traffic. The rest is agents and crons, whose rate we
+  // set ourselves.
+  test("the volume alarm watches the path that public browsers can flood", () => {
+    const alarm = alarmsBy(template(WIRED), "Invocations")[0] as any;
+    const fnDim = alarm.Properties.Dimensions.find(
+      (d: any) => d.Name === "FunctionName"
+    );
+    expect(JSON.stringify(fnDim.Value)).toContain("FrontendAuthorizer");
+  });
+
+  // Calibrated the opposite way round from the failure alarms: those sit just
+  // above an empirically zero floor, this one must sit far enough above a
+  // BUSY baseline to never cry wolf. Background 2-190/h, the incident ~36 000/h
+  // — 3 000/h is ~16x the busiest legitimate hour ever measured and ~1/12th of
+  // the loop. An hourly period is deliberate too: this asks "is someone
+  // burning money right now?", which does not get a better answer for being
+  // asked every five minutes, and a 5-minute window at the same rate would
+  // fire on legitimate short bursts.
+  test("the volume threshold clears real traffic by a wide margin", () => {
+    const alarm = alarmsBy(template(WIRED), "Invocations")[0] as any;
+    expect(alarm.Properties.Threshold).toBe(3000);
+    expect(alarm.Properties.Period).toBe(3600);
+    expect(alarm.Properties.Statistic).toBe("Sum");
+    expect(alarm.Properties.EvaluationPeriods).toBe(1);
+  });
+});
+
+// The counter that alarm exists beside writes to APP_STATE_TABLE from the most
+// exposed Lambda in the stack — the one every anonymous request reaches. The
+// same table holds per-app agent-session secrets, the quota measurement cache
+// and the LLM spend ledger, so the grant must stay pinned to the counter rows.
+describe("frontend authorizer table grant", () => {
+  let tmpRoot: string;
+  const saved = { ...process.env };
+
+  beforeAll(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "connector-authz-grant-"));
+    fs.mkdirSync(path.join(tmpRoot, "dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpRoot, "dist", "handler.js"),
+      "exports.handler=async()=>({});"
+    );
+  });
+
+  afterAll(() => {
+    process.env = saved;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function policies(): any[] {
+    process.env = { ...saved };
+    process.env.hereyaProjectRootDir = tmpRoot;
+    process.env.oauthServerUrl = "https://dilaya.eu/oauth/connect";
+    process.env.hereyaProjectEnv = "{}";
+    const app = new cdk.App();
+    const stack = new DilayaConnectorLambdaStack(app, "GrantStack", {
+      env: { account: "123456789012", region: "eu-west-1" },
+    });
+    const t = Template.fromStack(stack);
+    // The authorizer's own inline policy, found by the statement only it has.
+    return Object.values(t.findResources("AWS::IAM::Policy"))
+      .map((r: any) => r.Properties.PolicyDocument.Statement)
+      .filter((sts: any[]) =>
+        sts.some(
+          (st) =>
+            JSON.stringify(st.Condition ?? "").includes("reqcount#") ||
+            false
+        )
+      );
+  }
+
+  test("the counter grant is pinned to the counter rows", () => {
+    const found = policies();
+    expect(found).toHaveLength(1);
+    const st = found[0].find((s: any) =>
+      JSON.stringify(s.Condition ?? "").includes("reqcount#")
+    );
+    expect(st.Action).toBe("dynamodb:UpdateItem");
+    expect(
+      st.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"]
+    ).toEqual(["reqcount#*"]);
+  });
+
+  // grantReadWriteData would have been one word shorter and would have put the
+  // session secrets, the quota cache and the spend ledger inside the blast
+  // radius of the Lambda every stranger on the internet can reach.
+  test("adding a counter did not hand the authorizer the whole table", () => {
+    const st = policies()[0];
+    const writes = st.filter((s: any) => {
+      const actions = ([] as string[]).concat(s.Action ?? []);
+      return actions.some((a) =>
+        ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:*"].includes(a)
+      );
+    });
+    expect(writes).toHaveLength(0);
+    // ...and the one Update it does have is conditioned, never bare.
+    for (const s of st) {
+      const actions = ([] as string[]).concat(s.Action ?? []);
+      if (actions.includes("dynamodb:UpdateItem")) {
+        expect(s.Condition).toBeDefined();
+      }
+    }
+  });
 });
