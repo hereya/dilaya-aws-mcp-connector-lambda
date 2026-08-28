@@ -930,6 +930,22 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public org-usage read (NO JWT authorizer). dilaya.eu pulls an org's
+    // COUNTED REQUESTS for the current month, so it can warn the customer
+    // before the monthly cap stops serving their sites. The counters are
+    // written by the frontend authorizer into this account's state table and
+    // exist nowhere else; the allowance, the owner's address and Postmark are
+    // on the other side. Neither half can warn anyone alone.
+    //
+    // Same self-authentication as the two routes above (an AS-signed RS256
+    // assertion verified against the AS JWKS), with `aud` bound to THIS url so
+    // a domain-orders or org-events assertion cannot be replayed here.
+    httpApi.addRoutes({
+      path: "/billing/org-usage",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target

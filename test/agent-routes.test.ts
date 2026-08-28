@@ -182,6 +182,26 @@ describe("static public agent routes", () => {
     expect((route as any).Properties.AuthorizerId).toBeUndefined();
   });
 
+  it("exposes GET /billing/org-usage (AS-assertion-authenticated read) with NO authorizer", () => {
+    // dilaya.eu pulls an org's counted requests from here so it can warn the
+    // customer BEFORE the monthly cap stops serving their sites. Same
+    // assertion, so the same reasoning: behind the JWT authorizer the call
+    // would be rejected before the connector ever verified it, and the only
+    // visible symptom would be customers cut off without warning — the exact
+    // failure this route exists to prevent.
+    const t = template();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "GET /billing/org-usage",
+      AuthorizationType: "NONE",
+    });
+    const routes = t.findResources("AWS::ApiGatewayV2::Route", {
+      Properties: { RouteKey: "GET /billing/org-usage" },
+    });
+    const [route] = Object.values(routes);
+    expect(route).toBeDefined();
+    expect((route as any).Properties.AuthorizerId).toBeUndefined();
+  });
+
   it("keeps the /mcp route behind the CUSTOM JWT authorizer", () => {
     const t = template();
     t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
