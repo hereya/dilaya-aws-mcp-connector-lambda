@@ -69,6 +69,12 @@ delete process.env.APP_CONTENT_DOMAIN;
 const authorizer = require("../lib/frontend-authorizer/index.js");
 
 const updates = () => sends.filter((c) => c.__kind === "Update");
+/** The PER-APP counter — the one this suite is about. Since 2026-08-28 a
+ *  second, per-ORG counter rides on the same request (it is what the monthly
+ *  cap is enforced against, see request-cap.test.ts), so "how many writes" is
+ *  no longer the right question; "which rows" is. */
+const appUpdates = () =>
+  updates().filter((c) => String(c.input?.Key?.pk || "").startsWith("reqcount#"));
 
 function siteEvent(path: string) {
   return { rawPath: path, headers: {}, requestContext: { http: { path } } };
@@ -88,12 +94,12 @@ describe("frontend authorizer request counting", () => {
     // would have dropped: an app with auth not enabled still burns a Lambda.
     const res = await authorizer.handler(siteEvent(`/o/${ORG}/cariacomenu/site/api/auth/me`));
     expect(res.isAuthorized).toBe(true);
-    expect(updates()).toHaveLength(1);
+    expect(appUpdates()).toHaveLength(1);
   });
 
   test("the key separates org, app and month, so one app's loop is attributable", async () => {
     await authorizer.handler(siteEvent(`/o/${ORG}/cariacomenu/site/api/auth/me`));
-    const { input } = updates()[0];
+    const { input } = appUpdates()[0];
     const month = new Date().toISOString().slice(0, 7);
     expect(input.TableName).toBe("test-app-state");
     expect(input.Key.pk).toBe(`reqcount#${ORG}#cariacomenu#${month}`);
@@ -107,8 +113,14 @@ describe("frontend authorizer request counting", () => {
   test("two apps in one org are counted apart", async () => {
     await authorizer.handler(siteEvent(`/o/${ORG}/appone/site/x`));
     await authorizer.handler(siteEvent(`/o/${ORG}/apptwo/site/x`));
-    const keys = updates().map((c) => c.input.Key.pk);
+    const keys = appUpdates().map((c) => c.input.Key.pk);
     expect(new Set(keys).size).toBe(2);
+    // ...while the ORG's own monthly counter is deliberately SHARED by both:
+    // the plan's cap belongs to the organization, not to one of its apps.
+    const orgKeys = updates()
+      .map((c) => String(c.input.Key.pk))
+      .filter((k) => k.startsWith("reqcountorg#"));
+    expect(new Set(orgKeys).size).toBe(1);
   });
 
   // The property that makes this safe to put on the hot path at all.

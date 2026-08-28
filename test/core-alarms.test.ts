@@ -321,11 +321,12 @@ describe("frontend authorizer table grant", () => {
       JSON.stringify(s.Condition ?? "").includes("reqcount#")
     );
     expect(st.Action).toBe("dynamodb:UpdateItem");
-    // Two counter families, and nothing else on this table: the monthly
-    // consumption count and the per-IP-per-minute rate guard.
+    // Three counter families, and nothing else on this table: the per-app
+    // monthly count, the per-IP-per-minute rate guard, and the per-ORG monthly
+    // count the plan's request cap is enforced against.
     expect(
       st.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"]
-    ).toEqual(["reqcount#*", "ratecount#*"]);
+    ).toEqual(["reqcount#*", "ratecount#*", "reqcountorg#*"]);
   });
 
   // grantReadWriteData would have been one word shorter and would have put the
