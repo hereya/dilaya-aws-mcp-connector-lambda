@@ -1375,6 +1375,31 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         appStateTable.tableName
       );
       appStateTable.grantReadData(frontendAuthorizerRef);
+
+      // ...and writes exactly ONE kind of row: the per-app monthly request
+      // counter it increments on every attributed request (`reqcount#<orgId>#
+      // <app>#<month>`, read back by get-usage-report).
+      //
+      // Deliberately NOT grantReadWriteData. This authorizer is the most
+      // exposed component in the stack — it is invoked by every anonymous
+      // request that reaches a tenant frontend — and the same table holds the
+      // per-app agent-session secrets, the quota measurement cache and the LLM
+      // spend ledger. A blanket write grant would put all of those inside the
+      // blast radius of the one Lambda every stranger can reach, to add a
+      // counter. `dynamodb:LeadingKeys` pins the grant to the partition keys it
+      // actually needs, so the worst a compromise of this function could do to
+      // the table is miscount requests.
+      frontendAuthorizerRef.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["dynamodb:UpdateItem"],
+          resources: [appStateTable.tableArn],
+          conditions: {
+            "ForAllValues:StringLike": {
+              "dynamodb:LeadingKeys": ["reqcount#*"],
+            },
+          },
+        })
+      );
     }
 
     // -----------------------------------------------------------------------
@@ -2473,6 +2498,66 @@ function handler(event) {
           })
         );
       }
+    }
+
+    // --- Volume, which every alarm above is structurally blind to ----------
+    // Every instrument in this stack counts FAILURES. On 2026-08-27 a single
+    // browser called one tenant route 17 386 times in under two hours — 10 to
+    // 19 requests per second, sustained, from one residential IP — and not one
+    // of them fired, because every single request answered HTTP 200. A runaway
+    // `setInterval` (or a re-triggering effect) in a tenant's own page is not
+    // an error anywhere: Lambda `Errors` 0, gateway 5xx 0, CloudFront
+    // `5xxErrorRate` 0 %, the databases VM heartbeat a flat 60/60. That one
+    // page produced ~70 % of the connector's traffic for the day, and the
+    // only witness was the invocation COUNT — a number nobody reads between
+    // two sweeps. Without the sweep it would have been discovered on the bill.
+    //
+    // The frontend authorizer is the right place to watch, for two reasons.
+    // It is on the path of every tenant site/auth request (`authorizerResult
+    // TtlInSeconds: 0` — no caching, so one invocation per request, no
+    // undercount), and that path is the only UNBOUNDED one: it is public
+    // browser traffic. Everything else here is driven by agents or crons,
+    // whose rate we set ourselves.
+    //
+    // The threshold is calibrated on the measured baseline, like the alarms
+    // above, but the arithmetic runs the other way — this one must sit far
+    // ENOUGH ABOVE normal to never cry wolf, while still catching a loop
+    // early. Background is 2–190 invocations/hour; the 2026-08-27 loop ran at
+    // ~36 000/hour. 3 000/hour is ~16x the busiest legitimate hour ever
+    // measured and ~1/12th of the loop — a real traffic spike (a tenant's
+    // launch day, a newsletter) has room to be twelve times the record before
+    // it says anything, and a runaway crosses it within the first few minutes.
+    //
+    // The period is an hour on purpose. This is a COST alarm, not an outage
+    // one: nothing is broken, nothing is down, and the question it answers —
+    // "is someone burning money right now?" — does not get a better answer
+    // for being asked every five minutes. An hourly window also refuses to
+    // fire on a legitimate short burst, which a 5-minute window at the
+    // equivalent rate would do regularly.
+    if (frontendAuthorizerRef) {
+      alertOn(
+        new cloudwatch.Alarm(this, "FrontendAuthorizerVolumeAlarm", {
+          metric: frontendAuthorizerRef.metricInvocations({
+            period: cdk.Duration.hours(1),
+            statistic: "Sum",
+          }),
+          threshold: 3000,
+          evaluationPeriods: 1,
+          comparisonOperator:
+            cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+          // Same reasoning as the Errors alarms: no traffic is silence.
+          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+          alarmDescription:
+            "Dilaya connector: FrontendAuthorizer invocations >= 3000 in 1 hour (baseline 2-190/h). " +
+            "This is a VOLUME alarm, not a failure one — everything is probably answering 200. It " +
+            "means one tenant frontend is calling far more than any page legitimately does, almost " +
+            "always a loop in the app's own code (a setInterval without a guard, or an effect that " +
+            "re-triggers itself). Find it in the HttpApiAccessLogs group: group the last hour by " +
+            "sourceIp and path — a loop is ONE ip on ONE path, which is what separates it from a " +
+            "scanner (many paths, 404s) or real popularity (many ips). The org and app are in the " +
+            "path (/o/{orgId}/{app}/...); tell that app's owner, since the fix is in their page.",
+        })
+      );
     }
 
     // The gateway layer, which `AWS/Lambda Errors` structurally cannot see: a
