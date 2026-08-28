@@ -96,8 +96,17 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // wrong about shared addresses (corporate NAT, mobile carrier, café), so
     // turning it on is a deliberate act, never a default.
     const frontendRateLimit = process.env["frontendRateLimit"] || "1000";
+    // ENFORCING unless explicitly disabled, matching the authorizer's own
+    // default. The polarity matters and it bit once: while this read
+    // `=== "true" ? "true" : "false"`, the stack kept STAMPING
+    // FRONTEND_RATE_BLOCK="false" onto the function, so flipping the default
+    // inside the authorizer changed nothing — the explicit env var won, and the
+    // guard deployed green while refusing nothing. An env var the stack always
+    // sets is not a default; it is an override, and it has to agree with the
+    // code it overrides. Caught by reading the deployed function's config
+    // rather than trusting the release.
     const frontendRateBlock =
-      process.env["frontendRateBlock"] === "true" ? "true" : "false";
+      process.env["frontendRateBlock"] === "false" ? "false" : "true";
     // Domain purchase through Dilaya (Route 53 Domains). OPTIONAL and additive:
     // absent/false → no env, no IAM, feature fully inert connector-side (its
     // tools answer DOMAIN_PURCHASE_NOT_CONFIGURED). Only meaningful together

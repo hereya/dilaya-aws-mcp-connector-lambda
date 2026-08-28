@@ -408,3 +408,62 @@ describe("gateway last-resort throttle", () => {
     expect(stage().DefaultRouteSettings.DetailedMetricsEnabled).toBe(true);
   });
 });
+
+// The gap that let a green deploy ship a guard that refused nothing.
+//
+// The authorizer's own default was flipped to enforcing, but the STACK kept
+// stamping FRONTEND_RATE_BLOCK="false" onto the function — and an explicit env
+// var beats a code default, so the deploy went green while the guard stayed
+// inert. Nothing in the suite noticed, because every test asserted the
+// authorizer's behaviour with env vars it set ITSELF; none asserted what the
+// stack actually SENDS. It was caught by reading the deployed function's
+// configuration in production.
+//
+// So this asserts the wiring, not the behaviour: what value leaves the stack.
+describe("rate guard wiring (what the stack actually sends)", () => {
+  let tmpRoot: string;
+  const saved = { ...process.env };
+
+  beforeAll(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "connector-rate-env-"));
+    fs.mkdirSync(path.join(tmpRoot, "dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpRoot, "dist", "handler.js"),
+      "exports.handler=async()=>({});"
+    );
+  });
+  afterAll(() => {
+    process.env = saved;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function authorizerEnv(env: Record<string, string> = {}): any {
+    process.env = { ...saved };
+    process.env.hereyaProjectRootDir = tmpRoot;
+    process.env.oauthServerUrl = "https://dilaya.eu/oauth/connect";
+    process.env.hereyaProjectEnv = "{}";
+    Object.assign(process.env, env);
+    const app = new cdk.App();
+    const stack = new DilayaConnectorLambdaStack(app, "RateEnvStack", {
+      env: { account: "123456789012", region: "eu-west-1" },
+    });
+    const fns = Template.fromStack(stack).findResources("AWS::Lambda::Function");
+    const authorizer = Object.values(fns).find((f: any) =>
+      JSON.stringify(f.Properties?.Environment?.Variables ?? {}).includes(
+        "FRONTEND_RATE_LIMIT"
+      )
+    ) as any;
+    return authorizer.Properties.Environment.Variables;
+  }
+
+  test("the deployed authorizer is told to ENFORCE, not merely allowed to", () => {
+    expect(authorizerEnv().FRONTEND_RATE_BLOCK).toBe("true");
+    expect(authorizerEnv().FRONTEND_RATE_LIMIT).toBe("1000");
+  });
+
+  test("and the off switch still reaches it", () => {
+    expect(authorizerEnv({ frontendRateBlock: "false" }).FRONTEND_RATE_BLOCK).toBe(
+      "false"
+    );
+  });
+});
