@@ -88,6 +88,16 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // deploy. Empty → strict single-secret mode.
     const appContentOriginSecretPrevious =
       process.env["appContentOriginSecretPrevious"];
+    // Per-IP rate guard on tenant frontends (t_80c5ba958ad3). Both optional:
+    // the authorizer carries the same defaults, so an unset deployment behaves
+    // exactly as the code does. `frontendRateBlock` is the one that matters —
+    // it stays "false" (COUNT only: report what WOULD have been refused) until
+    // the counted data says who a block would actually cut. A per-IP limit is
+    // wrong about shared addresses (corporate NAT, mobile carrier, café), so
+    // turning it on is a deliberate act, never a default.
+    const frontendRateLimit = process.env["frontendRateLimit"] || "1000";
+    const frontendRateBlock =
+      process.env["frontendRateBlock"] === "true" ? "true" : "false";
     // Domain purchase through Dilaya (Route 53 Domains). OPTIONAL and additive:
     // absent/false → no env, no IAM, feature fully inert connector-side (its
     // tools answer DOMAIN_PURCHASE_NOT_CONFIGURED). Only meaningful together
@@ -1389,13 +1399,29 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       // counter. `dynamodb:LeadingKeys` pins the grant to the partition keys it
       // actually needs, so the worst a compromise of this function could do to
       // the table is miscount requests.
+      // The rate guard's two knobs. Both have working defaults in the
+      // authorizer, so an older deployment behaves identically; these exist so
+      // the limit can be retuned — and blocking switched on — by redeploying
+      // rather than by editing the handler.
+      frontendAuthorizerRef.addEnvironment(
+        "FRONTEND_RATE_LIMIT",
+        frontendRateLimit
+      );
+      frontendAuthorizerRef.addEnvironment(
+        "FRONTEND_RATE_BLOCK",
+        frontendRateBlock
+      );
+
       frontendAuthorizerRef.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ["dynamodb:UpdateItem"],
           resources: [appStateTable.tableArn],
           conditions: {
             "ForAllValues:StringLike": {
-              "dynamodb:LeadingKeys": ["reqcount#*"],
+              // Two row families, both counters: the monthly consumption count
+              // and the per-IP-per-minute rate guard. Still nothing else on
+              // this table.
+              "dynamodb:LeadingKeys": ["reqcount#*", "ratecount#*"],
             },
           },
         })
@@ -2556,6 +2582,56 @@ function handler(event) {
             "sourceIp and path — a loop is ONE ip on ONE path, which is what separates it from a " +
             "scanner (many paths, 404s) or real popularity (many ips). The org and app are in the " +
             "path (/o/{orgId}/{app}/...); tell that app's owner, since the fix is in their page.",
+        })
+      );
+    }
+
+    // --- What the rate guard WOULD have refused ---------------------------
+    // The guard ships in COUNT mode (see the authorizer's checkRate): it logs
+    // one `rate_guard` line per offending request and refuses nothing. That
+    // makes this filter the ONLY way to know it is doing anything at all — a
+    // component that RUNS without DELIVERING is invisible to every instrument
+    // that counts executions, which is exactly how the alarm relay sat broken
+    // for two real firings (t_e95d603a0a32).
+    //
+    // The same line, and therefore this same alarm, keeps working when blocking
+    // is switched on: `blocked` inside the line says which happened, so nothing
+    // here has to change on the day the mode flips.
+    //
+    // Substring-free JSON pattern, and deliberately NO dimensions: CloudWatch
+    // refuses a metric filter carrying both `dimensions` and a `defaultValue`,
+    // and refuses dimensions altogether on a pattern that does not extract
+    // named fields — two rules a green `cdk synth` does not enforce and that
+    // cost a rolled-back production deploy on 2026-08-27.
+    if (frontendAuthorizerRef) {
+      const rateGuardFilter = new logs.MetricFilter(this, "RateGuardFilter", {
+        logGroup: frontendAuthorizerRef.logGroup,
+        metricNamespace: "Dilaya/Connector",
+        metricName: "RateGuardTripped",
+        filterPattern: logs.FilterPattern.literal('{ $.type = "rate_guard" }'),
+        metricValue: "1",
+      });
+      alertOn(
+        new cloudwatch.Alarm(this, "RateGuardAlarm", {
+          metric: rateGuardFilter.metric({
+            period: cdk.Duration.minutes(5),
+            statistic: "Sum",
+          }),
+          threshold: 1,
+          evaluationPeriods: 1,
+          comparisonOperator:
+            cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+          alarmDescription:
+            "Dilaya connector: a tenant frontend crossed the per-IP rate guard (default 1000 requests " +
+            "per minute per IP) in the last 5 min. While FRONTEND_RATE_BLOCK is false this refused " +
+            "NOTHING — it reports what a block WOULD have cut, which is the data needed before " +
+            "turning blocking on. Read the `rate_guard` lines in the FrontendAuthorizer log group: " +
+            "`blocked` says whether it was enforced, `hits` how far over, `app`/`org` who, and `ip` " +
+            "is a truncated hash (the same tag across a minute = the same address). One hashed ip " +
+            "far over the limit on one path is a runaway loop in that app's page; several distinct " +
+            "tags near the limit is more likely a shared address (corporate NAT, mobile carrier) — " +
+            "which is the case that must NOT be blocked.",
         })
       );
     }
