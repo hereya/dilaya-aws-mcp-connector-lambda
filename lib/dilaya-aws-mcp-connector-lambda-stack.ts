@@ -615,6 +615,26 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         | apigwv2.CfnStage.RouteSettingsProperty
         | undefined),
       detailedMetricsEnabled: true,
+      // --- The last-resort ceiling (t_09669ba18d5e) ----------------------
+      // The per-IP guard in the frontend authorizer is the TARGETED defense:
+      // it cuts the one address that is looping and nobody else. This is the
+      // blunt one underneath it, and the two are not interchangeable.
+      //
+      // It is the only layer here that can answer a real **429**: an authorizer
+      // does not choose its status code (a refusal is always 403), while the
+      // gateway throttles natively and says "Too Many Requests" properly. But
+      // it is GLOBAL — one runaway would eat the shared budget and throttle
+      // every other tenant, and `/mcp` with them. So it must never be the thing
+      // that fires in a normal incident; it exists for the case the targeted
+      // guard cannot see (many addresses at once) or is itself broken.
+      //
+      // Hence a threshold with an absurd amount of headroom, not a tuned one:
+      // real traffic is 500-2300 requests per DAY (~0.03/s average) and the
+      // 2026-08-27 runaway peaked at 19/s. 100/s sustained with a 200 burst is
+      // >5x the worst second ever recorded on this gateway, so nothing
+      // legitimate — and not even a repeat of that loop — can reach it.
+      throttlingRateLimit: 100,
+      throttlingBurstLimit: 200,
     };
 
     // --- Whose 5xx is it? (2026-08-20 sweep finding) -----------------------
