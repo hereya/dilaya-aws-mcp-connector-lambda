@@ -120,16 +120,32 @@ describe("frontend rate guard", () => {
 
   // The whole point of shipping in COUNT mode: learn who would be cut before
   // cutting anyone. A per-IP limit is wrong about shared addresses.
-  test("over the limit in COUNT mode: reports, refuses NOTHING", async () => {
+  // ENFORCING by default since 2026-08-28. A guard that refuses nothing leaves
+  // the platform exactly as exposed as before; the margin (1000/min = 2.6x the
+  // busiest legitimate visitor-minute ever measured) is what makes enforcing
+  // safe. The default must be the enforcing one — this test is what stops a
+  // future edit from quietly returning it to a no-op.
+  test("over the limit, with nothing configured, the request IS refused", async () => {
     const a = load({ FRONTEND_RATE_LIMIT: "10" });
     hits = 11;
     const res = await a.handler(siteEvent(`/o/${ORG}/cariacomenu/site/x`));
-    expect(res.isAuthorized).toBe(true);
+    expect(res.isAuthorized).toBe(false);
     const line = guardLines()[0];
-    expect(line.blocked).toBe(false);
+    expect(line.blocked).toBe(true);
     expect(line.hits).toBe(11);
     expect(line.limit).toBe(10);
     expect(line.app).toBe("cariacomenu");
+  });
+
+  // The OFF switch, and it is deliberately the default's inverse rather than a
+  // deploy parameter: a package parameter has two halves and forgetting either
+  // deploys green while doing nothing (2026-08-07).
+  test("FRONTEND_RATE_BLOCK=false returns it to reporting only", async () => {
+    const a = load({ FRONTEND_RATE_LIMIT: "10", FRONTEND_RATE_BLOCK: "false" });
+    hits = 11;
+    const res = await a.handler(siteEvent(`/o/${ORG}/cariacomenu/site/x`));
+    expect(res.isAuthorized).toBe(true);
+    expect(guardLines()[0].blocked).toBe(false);
   });
 
   test("under the limit says nothing at all", async () => {
@@ -140,7 +156,7 @@ describe("frontend rate guard", () => {
     expect(guardLines()).toHaveLength(0);
   });
 
-  test("with blocking switched on, the same line reports blocked:true and the request is refused", async () => {
+  test("an explicit true is still honoured", async () => {
     const a = load({ FRONTEND_RATE_LIMIT: "10", FRONTEND_RATE_BLOCK: "true" });
     hits = 11;
     const res = await a.handler(siteEvent(`/o/${ORG}/cariacomenu/site/x`));
