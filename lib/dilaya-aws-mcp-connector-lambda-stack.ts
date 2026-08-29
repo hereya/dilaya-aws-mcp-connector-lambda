@@ -1769,19 +1769,32 @@ async function handler(event) {
   } catch (err) {
     return request;                       // passthrough -> origin 404
   }
-  // ORG PAUSED (value flag x = 1, deploy-pkg >= 0.1.60). The organization is
-  // suspended — trial over, payment missing, or an operator's decision — and
-  // its sites stop being served. Answered HERE, at the edge, and that placement
-  // is the whole point: the frontend authorizer never runs for a cache hit or
-  // for any path of a static-mode site, so a gate placed there would have paused
-  // exactly the orgs whose sites are cheapest for us to keep serving, and left
-  // the others online for ever (t_pause_stops_frontends). Before the redirect
-  // branch too: a paused space does not forward visitors either.
+  // SITE STOPPED (value flag x). Two causes, one mechanism:
+  //   x = 1  the ORGANIZATION IS PAUSED — trial over, payment missing, or an
+  //          operator's decision (deploy-pkg >= 0.1.60, t_pause_stops_frontends)
+  //   x = 2  the org is fine but PAST ITS MONTHLY REQUEST ALLOWANCE
+  //          (deploy-pkg >= 0.1.61, t_quota_cut_at_edge)
   //
-  // 503, not 403: the site is coming back the moment the org is un-paused, and
-  // 503 is the one status that says "temporarily unavailable" to a search
-  // engine instead of "gone". A no-store header so nothing survives the
-  // un-pause.
+  // Answered HERE, at the edge, and that placement is the whole point: the
+  // frontend authorizer never runs for a cache hit or for any path of a
+  // static-mode site, so a gate placed there stops exactly the orgs whose sites
+  // are CHEAPEST for us to keep serving and leaves the expensive ones online.
+  // The monthly cap already had that shape — it cut in the authorizer, which a
+  // fully static site never reaches — so it bit the wrong half of the tenants
+  // until this branch. Before the redirect branch too: a stopped site does not
+  // forward visitors either.
+  //
+  // TWO PAGES, because the two causes have different ways out and telling a
+  // customer over their allowance that their subscription is paused would send
+  // them to a payment page that has nothing to fix. NO APOSTROPHES in either
+  // body: this string is a JS single-quoted literal generated from a TS
+  // template literal, so a plain ' would terminate it and take every tenant
+  // site down with a syntax error (2026-08-29). Typographic U+2019 only.
+  //
+  // 503, not 403: both are temporary — one ends when the org is reactivated,
+  // the other at the start of next month — and 503 is the one status that says
+  // "temporarily unavailable" to a search engine instead of "gone". A no-store
+  // header so neither page survives the recovery.
   if (e.x) {
     return {
       statusCode: 503,
@@ -1791,7 +1804,9 @@ async function handler(event) {
         'cache-control': { value: 'no-store' },
         'retry-after': { value: '3600' }
       },
-      body: '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Site en pause</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1c1917;background:#faf9f7}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 .5rem;color:#57534e}</style><main><h1>Ce site est momentanément en pause</h1><p>Son espace est suspendu. Rien ne se perd : le site revient dès que son propriétaire réactive son espace.</p><p lang=en>This site is paused. Nothing is lost — it returns as soon as its owner reactivates their space.</p></main>'
+      body: e.x === 2
+        ? '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Plafond mensuel atteint</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1c1917;background:#faf9f7}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 .5rem;color:#57534e}</style><main><h1>Ce site a atteint son plafond mensuel</h1><p>Son espace a consommé le trafic inclus dans son forfait pour ce mois-ci. Rien ne se perd : le site revient au début du mois prochain, ou dès que son propriétaire augmente son forfait.</p><p lang=en>This site has reached its monthly traffic allowance. Nothing is lost — it returns at the start of next month, or as soon as its owner raises their plan.</p></main>'
+        : '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Site en pause</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1c1917;background:#faf9f7}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 .5rem;color:#57534e}</style><main><h1>Ce site est momentanément en pause</h1><p>Son espace est suspendu. Rien ne se perd : le site revient dès que son propriétaire réactive son espace.</p><p lang=en>This site is paused. Nothing is lost — it returns as soon as its owner reactivates their space.</p></main>'
     };
   }
   // CANONICAL REDIRECT (value flag r = target host): the host 301s to the same
