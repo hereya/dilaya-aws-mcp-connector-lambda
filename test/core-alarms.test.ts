@@ -404,9 +404,25 @@ describe("gateway last-resort throttle", () => {
   });
 
   // Adding throttling must not silently drop the per-route metrics that make a
-  // 5xx attributable — they live in the same property.
+  // 5xx attributable — they live in the same property. Since 2026-08-29 those
+  // metrics live on the platform routes' own settings (the stage default is
+  // off, so runtime-created tenant routes stop billing six custom metrics
+  // each); this asserts the throttle did not take them down with it.
   test("per-route metrics survive the addition", () => {
-    expect(stage().DefaultRouteSettings.DetailedMetricsEnabled).toBe(true);
+    const settings = Object.values(stage().RouteSettings) as any[];
+    expect(settings.length).toBeGreaterThan(0);
+    expect(settings.every((s) => s.DetailedMetricsEnabled === true)).toBe(true);
+  });
+
+  // The ceiling has to hold on the platform routes too, and they no longer
+  // inherit it — they carry their own copy.
+  test("every platform route carries the same ceiling as the default", () => {
+    const props = stage();
+    for (const setting of Object.values(props.RouteSettings) as any[]) {
+      expect(setting.ThrottlingRateLimit).toBe(
+        props.DefaultRouteSettings.ThrottlingRateLimit
+      );
+    }
   });
 });
 

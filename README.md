@@ -175,6 +175,33 @@ could not get a normal answer, and that is a platform question until proven othe
 org that owns a failing app is a separate, unbuilt concern; `HttpApi5xxTenantApp` is its raw
 material.
 
+### Per-route metrics: on for our routes, off for the tenants'
+
+API Gateway emits six metrics per route (`Count`, `Latency`, `IntegrationLatency`, `DataProcessed`,
+`4xx`, `5xx`), each billed as a **custom** metric at $0.30/month, prorated by the hours the route
+sees traffic. `detailedMetricsEnabled` used to be on for the whole stage, which meant the one or two
+routes `set-app-host` creates **at runtime** per customer frontend each added six billed metrics —
+so the monitoring bill grew with the customer list, and nothing said so. Measured 2026-08-29:
+$9.18/month of route metrics, $4.24 of it tenant `…/site…` / `…/auth…` routes, against $3.50 for all
+35 alarms in the account put together.
+
+So the stage default is now `false`, and the routes **this stack defines** carry
+`DetailedMetricsEnabled: true` in their own `RouteSettings`, derived by walking the construct tree —
+not from a hand-written list, so a route added here tomorrow is covered the day it is added. The
+cost is bounded by a route count this file controls instead of by how many customers have a
+frontend.
+
+Nothing was traded away for it. No alarm reads these metrics — the platform/tenant 5xx split above
+is built from log metric filters — and the access log already writes `routeKey`, `status` and
+`integrationStatus` for **every** request over the same two weeks the sweep reads, which is the finer
+signal, not the coarser one. What is gone is only the multi-month curve per tenant route in
+CloudWatch.
+
+Each route's settings **restate** the throttling ceiling rather than inheriting it: API Gateway's
+merge rule between a route's settings and the stage default is not something to bet a last-resort
+ceiling on, so the platform routes carry the numbers explicitly and a test asserts the two never
+diverge.
+
 **`4xx` is deliberately NOT alarmed.** It runs 30–85/day of scanner noise absorbed by tenant apps
 (all `int=200`, i.e. the tenant's own app answering). Alarming it would train everyone to ignore this
 topic, which is exactly how an alarm layer dies a second time. `ByodOriginRestamp` is likewise left
