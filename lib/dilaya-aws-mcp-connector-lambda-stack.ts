@@ -1769,6 +1769,31 @@ async function handler(event) {
   } catch (err) {
     return request;                       // passthrough -> origin 404
   }
+  // ORG PAUSED (value flag x = 1, deploy-pkg >= 0.1.60). The organization is
+  // suspended — trial over, payment missing, or an operator's decision — and
+  // its sites stop being served. Answered HERE, at the edge, and that placement
+  // is the whole point: the frontend authorizer never runs for a cache hit or
+  // for any path of a static-mode site, so a gate placed there would have paused
+  // exactly the orgs whose sites are cheapest for us to keep serving, and left
+  // the others online for ever (t_pause_stops_frontends). Before the redirect
+  // branch too: a paused space does not forward visitors either.
+  //
+  // 503, not 403: the site is coming back the moment the org is un-paused, and
+  // 503 is the one status that says "temporarily unavailable" to a search
+  // engine instead of "gone". A no-store header so nothing survives the
+  // un-pause.
+  if (e.x) {
+    return {
+      statusCode: 503,
+      statusDescription: 'Service Unavailable',
+      headers: {
+        'content-type': { value: 'text/html; charset=utf-8' },
+        'cache-control': { value: 'no-store' },
+        'retry-after': { value: '3600' }
+      },
+      body: '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Site en pause</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1c1917;background:#faf9f7}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 .5rem;color:#57534e}</style><main><h1>Ce site est momentanément en pause</h1><p>Son espace est suspendu. Rien ne se perd : le site revient dès que son propriétaire réactive son espace.</p><p lang=en>This site is paused. Nothing is lost — it returns as soon as its owner reactivates their space.</p></main>'
+    };
+  }
   // CANONICAL REDIRECT (value flag r = target host): the host 301s to the same
   // path+query on r instead of serving the app — rendered entirely at the edge
   // (no Lambda), identical in static and dynamic modes. Set via
