@@ -14,6 +14,7 @@
 
 const sends: any[] = [];
 let orgCount = 1;
+let edgeCount: number | undefined;
 let orgCap: number | null = 1_000_000;
 let capLookupThrows = false;
 let counterThrows = false;
@@ -46,7 +47,12 @@ jest.mock(
           }
           if (pk.startsWith("reqcountorg#")) {
             if (counterThrows) return Promise.reject(new Error("ddb down"));
-            return Promise.resolve({ Attributes: { requests: orgCount } });
+            return Promise.resolve({
+              Attributes: {
+                requests: orgCount,
+                ...(edgeCount === undefined ? {} : { edge_requests: edgeCount }),
+              },
+            });
           }
           if (pk.startsWith("ratecount#")) {
             return Promise.resolve({ Attributes: { hits: 1 } });
@@ -95,6 +101,7 @@ describe("monthly request cap", () => {
   let warn: jest.SpyInstance;
   beforeEach(() => {
     orgCount = 1;
+    edgeCount = undefined;
     orgCap = 1_000_000;
     capLookupThrows = false;
     counterThrows = false;
@@ -123,7 +130,9 @@ describe("monthly request cap", () => {
     expect(w[0].input.Key.pk).toBe(`reqcountorg#${ORG}#${month}`);
     expect(w[0].input.UpdateExpression).toContain("ADD");
     // Reads its own result — summing per-app rows would be N reads per request.
-    expect(w[0].input.ReturnValues).toBe("UPDATED_NEW");
+    // ALL_NEW rather than UPDATED_NEW so the edge count written by the
+    // connector rides back on the same write (t_b8f659db595c).
+    expect(w[0].input.ReturnValues).toBe("ALL_NEW");
   });
 
   test("well under the cap, the request is served", async () => {
@@ -179,6 +188,53 @@ describe("monthly request cap", () => {
     capLookupThrows = true;
     orgCount = 999_000_000;
     expect((await a.handler(siteEvent(`/o/${ORG}/app1/site/x`))).isAuthorized).toBe(true);
+  });
+
+  // --- edge-served traffic (t_b8f659db595c) --------------------------------
+  //
+  // This authorizer only ever runs for requests that reach the ORIGIN. A cache
+  // hit and every path of a static-mode site are answered by CloudFront alone —
+  // measured in prod on 2026-08-28, `GET /` on a static tenant host returned
+  // 200 with zero invocations here. The connector folds the CloudFront access
+  // log into `edge_requests` on the same item; these tests hold the arithmetic
+  // that makes the two numbers safe to combine.
+
+  test("a static org past the cap is cut on the EDGE count alone", async () => {
+    const a = load();
+    orgCount = 12; // almost nothing reaches the origin: the site is static
+    edgeCount = 1_050_001;
+    expect((await a.handler(siteEvent(`/o/${ORG}/app1/site/api/x`))).isAuthorized).toBe(false);
+    expect(capLines()[0].count).toBe(1_050_001);
+  });
+
+  // Adding the two would count every dynamic request twice — the log records
+  // the SAME request the authorizer just counted — and would cut every
+  // dynamic customer at half its allowance.
+  test("the two counts are MAXed, never summed", async () => {
+    const a = load();
+    orgCount = 600_000;
+    edgeCount = 600_000;
+    expect((await a.handler(siteEvent(`/o/${ORG}/app1/site/x`))).isAuthorized).toBe(true);
+    expect(capLines()).toHaveLength(0);
+  });
+
+  // Logs arrive minutes behind, so early in a month (and for the whole of the
+  // first month after this ships) the edge figure trails the live one. It must
+  // never drag the count DOWN.
+  test("a lagging edge count never lowers the live one", async () => {
+    const a = load();
+    orgCount = 1_050_001;
+    edgeCount = 3;
+    expect((await a.handler(siteEvent(`/o/${ORG}/app1/site/api/x`))).isAuthorized).toBe(false);
+    expect(capLines()[0].count).toBe(1_050_001);
+  });
+
+  test("an item with no edge count at all behaves exactly as before", async () => {
+    const a = load();
+    orgCount = 1_050_001;
+    edgeCount = undefined;
+    expect((await a.handler(siteEvent(`/o/${ORG}/app1/site/api/x`))).isAuthorized).toBe(false);
+    expect(capLines()[0].count).toBe(1_050_001);
   });
 
   test("an unwritable counter does not cut", async () => {
