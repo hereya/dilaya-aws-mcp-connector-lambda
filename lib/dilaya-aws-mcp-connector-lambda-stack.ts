@@ -26,6 +26,15 @@ import { Construct } from "constructs";
 import * as path from "path";
 import * as fs from "fs";
 
+/**
+ * Key prefix every CloudFront access log lands under, in the one edge-log
+ * bucket. Shared by the stack's app-content distribution and by the BYOD
+ * per-org distributions the connector creates at runtime — the reader keys its
+ * checkpoints on `<prefix><distributionId>.`, so one prefix is enough and a new
+ * distribution needs no new configuration anywhere.
+ */
+const EDGE_LOG_PREFIX = "cf/";
+
 export class DilayaConnectorLambdaStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -1917,6 +1926,52 @@ async function handler(event) {
           }
         );
 
+        // -------------------------------------------------------------------
+        // Edge access logs (2026-08-29, t_b8f659db595c).
+        //
+        // The per-org request cap counts in the frontend authorizer, which only
+        // ever sees requests that reach the ORIGIN. A cache hit, and a
+        // static-mode site (`static_prefixes: ["/"]`, served straight from S3
+        // by the /static behavior and the router's origin swap), are answered
+        // at the edge: zero Lambda invocations, zero counters touched. Measured
+        // in prod on 2026-08-28 — `GET /` on a static tenant host returned 200
+        // with no authorizer invocation at all, while `/auth/login` and
+        // `/api/ping` on the SAME app counted 2 of 2. So the cap has a blind
+        // spot exactly where traffic is cheapest to serve and easiest to
+        // explode, and `get-usage-report` under-counts those orgs.
+        //
+        // The edge cannot count for us: a CloudFront Function has nowhere to
+        // write and its KVS binding is read-only. The access log is therefore
+        // the ONLY place this half of the traffic is visible — and it cannot be
+        // replaced by a metric, because AWS/CloudFront metrics are per
+        // DISTRIBUTION and this one distribution carries every vanity host of
+        // every org.
+        //
+        // LEGACY (v1) logging rather than standard-logging-v2, on purpose: v2
+        // offers field selection and hive partitioning, but it is three
+        // CloudWatch Logs delivery resources per distribution — and the BYOD
+        // per-org distributions are created by the CONNECTOR at runtime, where
+        // one property it can set the same way is worth more than smaller
+        // files. v1 keys are `<prefix><distId>.<YYYY-MM-DD-HH>.<hash>.gz`, so a
+        // single shared prefix still lists chronologically WITHIN one
+        // distribution: that is what lets the reader keep one checkpoint per
+        // distribution and never read a file twice.
+        //
+        // 45 days of retention: the counter this feeds is monthly, so the only
+        // window that must survive is the current month plus the reader's lag.
+        // These logs are not an archive and nothing else reads them.
+        const edgeLogBucket = new s3.Bucket(this, "EdgeAccessLogBucket", {
+          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+          enforceSSL: true,
+          // CloudFront v1 log delivery writes each object with an ACL grant to
+          // the log-delivery account, so the bucket must accept ACLs at all.
+          // BUCKET_OWNER_PREFERRED is what CDK itself uses for the bucket it
+          // creates when `enableLogging` is set without one, and it keeps every
+          // delivered object owned by this account.
+          objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED,
+          lifecycleRules: [{ expiration: cdk.Duration.days(45) }],
+        });
+
         // Same API-GW custom-domain origin as the path URL. Default HttpOrigin
         // Host = `customDomain`, so API Gateway's domain mapping still matches.
         const appContentDistribution = new cloudfront.Distribution(
@@ -1925,6 +1980,13 @@ async function handler(event) {
           {
             certificate: appContentCertificate,
             domainNames: [`*.${appContentDomain}`],
+            enableLogging: true,
+            logBucket: edgeLogBucket,
+            logFilePrefix: EDGE_LOG_PREFIX,
+            // Cookies are the frontend SESSION cookies. They are never needed
+            // to count a request against an org and would put a live session
+            // identifier in a log this reader does not otherwise touch.
+            logIncludesCookies: false,
             defaultBehavior: {
               origin: new origins.HttpOrigin(customDomain, {
                 protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
@@ -2013,6 +2075,16 @@ async function handler(event) {
         //     assets/ into the static bucket at deploy-backend, and BYOD
         //     runtime-created distributions replicate the same cache policy +
         //     static origin/behavior (referenced by id).
+        // --- Edge access logs: the connector reads them to fold edge-served
+        //     traffic into the per-org monthly counter, and stamps the SAME
+        //     bucket + prefix on the BYOD distributions it creates at runtime.
+        fn.addEnvironment("EDGE_LOG_BUCKET", edgeLogBucket.bucketName);
+        fn.addEnvironment("EDGE_LOG_PREFIX", EDGE_LOG_PREFIX);
+        fn.addEnvironment(
+          "EDGE_LOG_BUCKET_DOMAIN",
+          edgeLogBucket.bucketRegionalDomainName
+        );
+        edgeLogBucket.grantRead(fn);
         fn.addEnvironment("APP_STATIC_BUCKET", staticAssetsBucket.bucketName);
         fn.addEnvironment(
           "APP_STATIC_BUCKET_DOMAIN",
