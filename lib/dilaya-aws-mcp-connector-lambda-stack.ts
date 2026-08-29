@@ -615,15 +615,45 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         userAgent: "$context.identity.userAgent",
       }),
     };
-    // Per-route `5xx`/`4xx`/`Count`/`Latency`. Without this the 5xx metric
-    // exists only at the API level, which is what made the 2026-08-05 burst
-    // unattributable: 9 failures, no way to say whether they were /mcp or a
-    // tenant site route.
+    // --- The last-resort ceiling's numbers, in one place -------------------
+    // Repeated verbatim onto every platform route below. API Gateway's merge
+    // rule between a route's settings and the stage default is not something
+    // to bet a safety ceiling on, so the platform routes state their throttle
+    // explicitly: whichever way it merges, they carry exactly these numbers.
+    const THROTTLING_RATE_LIMIT = 100;
+    const THROTTLING_BURST_LIMIT = 200;
+
+    // Per-route `5xx`/`4xx`/`Count`/`Latency` — ON for the routes this stack
+    // defines, OFF by default (2026-08-29).
+    //
+    // It was on for everything, because with only the API-level 5xx metric the
+    // 2026-08-05 burst was unattributable: 9 failures, no way to say whether
+    // they were /mcp or a tenant site route. That attribution is still needed
+    // — but it is no longer this property that provides it, and this property
+    // is the one that costs money per tenant.
+    //
+    // API Gateway emits SIX metrics per route (`Count`, `Latency`,
+    // `IntegrationLatency`, `DataProcessed`, `4xx`, `5xx`), each billed as a
+    // CUSTOM metric at $0.30/month, prorated by the hours the route sees
+    // traffic. `set-app-host` creates one or two routes per app frontend AT
+    // RUNTIME, and each inherited this default — so the monitoring bill grew
+    // with the customer list, invisibly. Measured on 2026-08-29: $9.18/month
+    // of route metrics, $4.24 of it the tenant `…/site…` and `…/auth…` routes,
+    // against $3.50 for all 35 alarms put together.
+    //
+    // What replaces it for tenant routes: the access log above already writes
+    // `routeKey` + `status` + `integrationStatus` for EVERY request, over the
+    // same two weeks the sweep reads — the finer signal, not the coarser one.
+    // And nothing alarms on these metrics: the platform-vs-tenant 5xx split is
+    // built from the two log metric filters below, not from them.
+    //
+    // So the cost is now bounded by a route count this file controls, instead
+    // of by how many customers have a frontend.
     cfnDefaultStage.defaultRouteSettings = {
       ...(cfnDefaultStage.defaultRouteSettings as
         | apigwv2.CfnStage.RouteSettingsProperty
         | undefined),
-      detailedMetricsEnabled: true,
+      detailedMetricsEnabled: false,
       // --- The last-resort ceiling (t_09669ba18d5e) ----------------------
       // The per-IP guard in the frontend authorizer is the TARGETED defense:
       // it cuts the one address that is looping and nobody else. This is the
@@ -642,9 +672,32 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       // 2026-08-27 runaway peaked at 19/s. 100/s sustained with a 200 burst is
       // >5x the worst second ever recorded on this gateway, so nothing
       // legitimate — and not even a repeat of that loop — can reach it.
-      throttlingRateLimit: 100,
-      throttlingBurstLimit: 200,
+      throttlingRateLimit: THROTTLING_RATE_LIMIT,
+      throttlingBurstLimit: THROTTLING_BURST_LIMIT,
     };
+
+    // The routes THIS STACK defines keep their detail. Derived by walking the
+    // construct tree rather than repeating a list: a route added to this file
+    // tomorrow is covered on the day it is added, and a route created at
+    // runtime — the ones that multiply — is not, because it is not here.
+    cfnDefaultStage.routeSettings = cdk.Lazy.any({
+      produce: () =>
+        Object.fromEntries(
+          httpApi.node
+            .findAll()
+            .filter(
+              (c): c is apigwv2.CfnRoute => c instanceof apigwv2.CfnRoute
+            )
+            .map((route) => [
+              route.routeKey,
+              {
+                DetailedMetricsEnabled: true,
+                ThrottlingRateLimit: THROTTLING_RATE_LIMIT,
+                ThrottlingBurstLimit: THROTTLING_BURST_LIMIT,
+              },
+            ])
+        ),
+    });
 
     // --- Whose 5xx is it? (2026-08-20 sweep finding) -----------------------
     // The API-level `AWS/ApiGateway 5xx` metric counts every 5xx on this

@@ -94,10 +94,51 @@ describe("HTTP API gateway-level observability", () => {
     expect(format.userAgent).toBe("$context.identity.userAgent");
   });
 
-  it("enables per-route detailed metrics", () => {
+  // Per-route detail is ON for the routes this stack defines and OFF by
+  // default, so that the routes `set-app-host` creates at runtime — one or two
+  // per customer frontend — do not each add six billed custom metrics. The
+  // attribution that made this property worth having in the first place now
+  // comes from the access log asserted above, which carries `routeKey` on
+  // every request; these tests are what stop the two halves drifting apart.
+  it("leaves per-route detailed metrics OFF for routes it does not define", () => {
     template().hasResourceProperties("AWS::ApiGatewayV2::Stage", {
       StageName: "$default",
-      DefaultRouteSettings: Match.objectLike({ DetailedMetricsEnabled: true }),
+      DefaultRouteSettings: Match.objectLike({ DetailedMetricsEnabled: false }),
     });
+  });
+
+  it("keeps per-route detailed metrics on every route it DOES define", () => {
+    const t = template();
+    const routeKeys = Object.values(
+      t.findResources("AWS::ApiGatewayV2::Route")
+    ).map((r: any) => r.Properties.RouteKey);
+    const settings = (
+      Object.values(t.findResources("AWS::ApiGatewayV2::Stage"))[0] as any
+    ).Properties.RouteSettings;
+
+    // The population, not a sample: a route added to the stack without a
+    // settings entry would silently lose its metrics.
+    expect(routeKeys.length).toBeGreaterThan(0);
+    for (const key of routeKeys) {
+      expect(settings[key]).toBeDefined();
+      expect(settings[key].DetailedMetricsEnabled).toBe(true);
+    }
+    expect(Object.keys(settings).sort()).toEqual([...routeKeys].sort());
+  });
+
+  // A route's own settings and the stage default merge by a rule we do not
+  // control, so the platform routes restate the ceiling instead of relying on
+  // inheritance. If these two ever diverge, one of them is wrong.
+  it("restates the throttling ceiling on each route it defines", () => {
+    const props = (
+      Object.values(
+        template().findResources("AWS::ApiGatewayV2::Stage")
+      )[0] as any
+    ).Properties;
+    const def = props.DefaultRouteSettings;
+    for (const setting of Object.values(props.RouteSettings) as any[]) {
+      expect(setting.ThrottlingRateLimit).toBe(def.ThrottlingRateLimit);
+      expect(setting.ThrottlingBurstLimit).toBe(def.ThrottlingBurstLimit);
+    }
   });
 });
