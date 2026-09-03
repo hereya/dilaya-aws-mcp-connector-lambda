@@ -216,9 +216,14 @@ mutation-checked: removing the wiring makes them fail.
 
 CDK (`iac: cdk`). It **synths from TypeScript via ts-node** (`cdk.json` → `npx ts-node --prefer-ts-exts
 bin/…ts`), so **edit the `.ts` under `lib/` — the committed `.js` is vestigial** (gitignored build
-output). No CI in this repo: publish a new version by bumping `hereyarc.yaml`, committing, pushing,
-and running `hereya publish`. The connector's `hereya.yaml` pins the version; to roll a change to
-prod, publish here, bump that pin, then do a `dilaya/connector` release (on an explicit deploy GO).
+output). Publish a new version by bumping `hereyarc.yaml`, merging, and creating a **GitHub release
+`v<version>`** (the tag must equal the `hereyarc.yaml` version): `.github/workflows/publish.yml` runs
+`hereya publish` with the org's `HEREYA_TOKEN`, so no local Hereya login is needed (a local
+`hereya publish` still works; a failed publish of the same version is retried via the workflow's
+manual dispatch). `hereya publish` sends metadata only (repository URL, commit, sha256 of
+`git archive HEAD`) — nothing is built in CI. **Publishing does not deploy**: the connector's
+`hereya.yaml` pins the version; to roll a change to prod, publish here, bump that pin, then do a
+`dilaya/connector` release (on an explicit deploy GO).
 
 ```bash
 npm run build   # tsc (typecheck; the .js it emits is not shipped)
