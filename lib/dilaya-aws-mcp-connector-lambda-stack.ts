@@ -1483,6 +1483,28 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       fn.addEnvironment("ALARM_INBOX_APP", alarmInboxApp);
     }
 
+    // The CUSTOMER's half of an alarm (connector src/incident-analysers.ts).
+    // When the volume alarm or the tenant-5xx alarm fires, the connector reads
+    // the last hour of the access log through Logs Insights, names the org,
+    // the app and the path behind it, and hands that org a fiche — in its MCP
+    // instructions, its agent inbox, and (via dilaya.eu's usage pull) an email.
+    // Read-only, event-driven, and scoped to THIS log group: no timer, no
+    // per-app scan, nothing runs unless an alarm already did. `GetQueryResults`
+    // takes no resource in IAM (a query id is not an ARN), hence the "*".
+    fn.addEnvironment("ACCESS_LOG_GROUP", accessLogGroup.logGroupName);
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["logs:StartQuery", "logs:StopQuery"],
+        resources: [accessLogGroup.logGroupArn, `${accessLogGroup.logGroupArn}:*`],
+      })
+    );
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["logs:GetQueryResults"],
+        resources: ["*"],
+      })
+    );
+
     // The frontend authorizer reads the per-app agent-session HMAC secret
     // (`appsecret#<orgId>#<app>`, written by the connector's ensureAppSecret) to
     // validate the `dilaya_agent` browser-testing session cookie. Read-only.
@@ -2772,6 +2794,34 @@ function handler(event) {
     // launch day, a newsletter) has room to be twelve times the record before
     // it says anything, and a runaway crosses it within the first few minutes.
     //
+    // An app's OWN backend answering 5xx on its site routes. The platform alarm
+    // subtracts this population on purpose (a client's 500 is the client's to
+    // fix) — and until 2026-09-03 nobody was told, the org included. This alarm
+    // exists to ROUTE it: the relay wakes the connector, whose analyser names
+    // the app and the path and hands the customer a fiche with the fix
+    // (connector src/incident-analysers.ts, APP_5XX). Three errors in five
+    // minutes is already a broken feature for a real visitor; one or two may be
+    // a deploy in flight. Silence is not breaching: no errors is the goal.
+    alertOn(
+      new cloudwatch.Alarm(this, "TenantApp5xxAlarm", {
+        metric: httpApi5xxTenantAppFilter.metric({
+          period: cdk.Duration.minutes(5),
+          statistic: "Sum",
+        }),
+        threshold: 3,
+        evaluationPeriods: 1,
+        comparisonOperator:
+          cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription:
+          "Dilaya tenant apps: an app's own backend returned >= 3 × 5xx on its /site routes in 5 " +
+          "minutes (integrationStatus 200 = the app's code produced the error, not the platform). " +
+          "NOT a platform fault — this alarm exists so the connector's incident analyser names the " +
+          "org/app/path from the HttpApiAccessLogs group and tells THAT org (MCP notice + agent inbox + " +
+          "owner email via dilaya.eu). Read the analyser's `incident` log line for the verdict.",
+      })
+    );
+
     // The period is an hour on purpose. This is a COST alarm, not an outage
     // one: nothing is broken, nothing is down, and the question it answers —
     // "is someone burning money right now?" — does not get a better answer
