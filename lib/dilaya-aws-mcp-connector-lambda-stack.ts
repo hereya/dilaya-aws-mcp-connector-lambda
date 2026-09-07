@@ -708,6 +708,37 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
         ),
     });
 
+    // …AND THE STAGE MUST BE WRITTEN AFTER THE ROUTES IT NAMES.
+    //
+    // What the settings above express is invisible to CloudFormation: the keys
+    // are plain STRINGS, so nothing in the template says the stage depends on
+    // the routes. CloudFormation is therefore free to update the stage first —
+    // and it does. API Gateway then refuses the whole update:
+    //
+    //   Unable to find Route by key POST /org-domains/auto-renew
+    //   within the provided RouteSettings (404)
+    //
+    // That is not a hypothesis: it is what broke the 0.1.216 deploy of
+    // app.dilaya.eu on 2026-09-07, the first time a ROUTE was added since these
+    // per-route settings existed. Worse, the ROLLBACK failed on the mirror
+    // image of the same quirk (removing the settings of a route that does not
+    // exist is also a 404), leaving a production stack stuck in
+    // UPDATE_ROLLBACK_FAILED — traffic fine, every future deploy blocked.
+    //
+    // An Aspect rather than a loop here: routes are added throughout this
+    // constructor (and some in helpers below), so a dependency wired at this
+    // line would cover only the routes that happen to exist at this line — the
+    // ones added later, i.e. exactly the new ones this protects, would be
+    // missed. The aspect runs once the whole tree is built.
+    cdk.Aspects.of(this).add({
+      visit(node: Construct) {
+        if (node instanceof apigwv2.CfnRoute) {
+          // `node.addDependency`, not the deprecated `CfnResource.addDependency`.
+          cfnDefaultStage.node.addDependency(node);
+        }
+      },
+    });
+
     // --- Whose 5xx is it? (2026-08-20 sweep finding) -----------------------
     // The API-level `AWS/ApiGateway 5xx` metric counts every 5xx on this
     // gateway, which is SHARED by every tenant site and backend. Over 30 days
