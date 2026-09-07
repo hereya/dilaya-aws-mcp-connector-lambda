@@ -2364,7 +2364,12 @@ async function handler(event) {
                 // registrant on file (dilaya.eu sends; nothing returns it to a
                 // tool caller), and the two are deliberately SEPARATE gestures
                 // so a single click can never start a transfer on its own.
-                "route53domains:GetDomainAuthCode",
+                // The API — and therefore the IAM action — is RETRIEVE, not
+                // "Get". A policy naming a non-existent action is accepted by
+                // IAM and grants NOTHING, silently: no synth, no typecheck and
+                // no unit test can see it. Only the SDK's own command name
+                // (RetrieveDomainAuthCodeCommand) betrays it.
+                "route53domains:RetrieveDomainAuthCode",
                 "route53domains:EnableDomainTransferLock",
                 "route53domains:DisableDomainTransferLock",
               ],
