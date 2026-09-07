@@ -1008,6 +1008,39 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    // Public org-domains routes (NO JWT authorizer). What the CUSTOMER SPACE
+    // on dilaya.eu shows and does about the domains an org bought: who the
+    // name is registered to, when it expires, whether it renews — and the two
+    // gestures that make the ownership real rather than stated (stop renewing;
+    // ask for the transfer code that lets the customer take the name
+    // elsewhere). None of it can be served from dilaya.eu alone: the domains
+    // live in THIS account, and only this side can ask the registrar.
+    //
+    // Same self-authentication as the routes above (an AS-signed RS256
+    // assertion verified against the AS JWKS), and each `aud` is bound to its
+    // OWN url — which is the point of listing three routes rather than one
+    // multiplexed endpoint: an assertion minted to READ a customer's domains
+    // cannot be replayed to stop their renewal or to mint their transfer code.
+    httpApi.addRoutes({
+      path: "/org-domains",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: lambdaIntegration,
+    });
+    httpApi.addRoutes({
+      path: "/org-domains/auto-renew",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+    });
+    // The code itself NEVER travels back to a browser or an agent: this route
+    // answers dilaya.eu, which mails it to the registrant on file at the
+    // registrar (an address supplied by nobody — read from the registrar), and
+    // reports only that it was sent.
+    httpApi.addRoutes({
+      path: "/org-domains/transfer-code",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+    });
+
     // Allow API Gateway to invoke the org Lambda on ANY route of this API.
     // HttpLambdaIntegration only grants a route-specific permission for /mcp,
     // but the org Lambda creates additional routes at runtime that target
@@ -2324,6 +2357,16 @@ async function handler(event) {
                 "route53domains:ResendContactReachabilityEmail",
                 "route53domains:EnableDomainAutoRenew",
                 "route53domains:DisableDomainAutoRenew",
+                // LEAVING is a customer right, so the connector must be able to
+                // hand a customer the key to their own name: the authorization
+                // code, and the lock that stands in front of it. Neither ever
+                // reaches an agent's context — the code is emailed to the
+                // registrant on file (dilaya.eu sends; nothing returns it to a
+                // tool caller), and the two are deliberately SEPARATE gestures
+                // so a single click can never start a transfer on its own.
+                "route53domains:GetDomainAuthCode",
+                "route53domains:EnableDomainTransferLock",
+                "route53domains:DisableDomainTransferLock",
               ],
               resources: ["*"],
             })
