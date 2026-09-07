@@ -87,7 +87,7 @@ describe("org-domains routes (customer space)", () => {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: Match.arrayWith([
-              "route53domains:GetDomainAuthCode",
+              "route53domains:RetrieveDomainAuthCode",
               "route53domains:EnableDomainTransferLock",
               "route53domains:DisableDomainTransferLock",
             ]),
