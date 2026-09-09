@@ -88,22 +88,31 @@ aws_ iam attach-role-policy --role-name "$CREATED_ROLE" \
 echo "Rôle prêt, on laisse IAM se propager (10 s)…"
 sleep 10
 
-mkfn() { # mkfn <nom> <corps du handler>
-  local fn="$1" body="$2"
+# ⚠️ mkfn écrit l'ARN dans une variable passée par NOM, au lieu de le faire sortir
+# sur stdout. La version évidente — `FN_A="$(mkfn …)"` — appelle la fonction dans
+# un SOUS-SHELL : le `CREATED_FNS+=(…)` s'y perd, et le nettoyage ne voit alors
+# aucune lambda à supprimer. Mesuré le 09/09 : trois lambdas orphelines après un
+# run dont le nettoyage s'annonçait pourtant complet ("api supprimée / rôle
+# supprimé"). Un nettoyage qui se déclare sans rien supprimer est pire qu'un
+# nettoyage absent : il rassure.
+mkfn() { # mkfn <nom-variable-sortie> <nom-fonction> <corps du handler>
+  local -n _out="$1"
+  local fn="$2" body="$3"
   printf 'exports.handler = async function (event) {\n%s\n};\n' "$body" > "$TMP/index.js"
   (cd "$TMP" && zip -q -FS fn.zip index.js)
-  aws_ lambda create-function --function-name "$fn" --runtime nodejs22.x \
+  CREATED_FNS+=("$fn")   # AVANT la création : si create-function échoue à mi-chemin
+                         # (ou si le trap part pendant), la lambda est quand même réclamée.
+  _out="$(aws_ lambda create-function --function-name "$fn" --runtime nodejs22.x \
     --role "$ROLE_ARN" --handler index.handler --zip-file "fileb://$TMP/fn.zip" \
-    --query FunctionArn --output text
-  CREATED_FNS+=("$fn")
+    --query FunctionArn --output text)"
 }
 
 # A — ce que nous faisons AUJOURD'HUI : réponse SIMPLE, refus.
-FN_A="$(mkfn "${NAME}-a" '  return { isAuthorized: false };')"
+mkfn FN_A "${NAME}-a" '  return { isAuthorized: false };'
 # B — la recette AWS : errorMessage renvoyé, SANS identity source.
-FN_B="$(mkfn "${NAME}-b" '  return { errorMessage: "Unauthorized" };')"
+mkfn FN_B "${NAME}-b" '  return { errorMessage: "Unauthorized" };'
 # C — la recette REST v1, celle qui pourrait faire 500 partout.
-FN_C="$(mkfn "${NAME}-c" '  throw new Error("Unauthorized");')"
+mkfn FN_C "${NAME}-c" '  throw new Error("Unauthorized");'
 
 # --- API + intégration -------------------------------------------------------
 CREATED_API="$(aws_ apigatewayv2 create-api --name "$NAME" --protocol-type HTTP \
@@ -155,3 +164,12 @@ echo "Lecture :"
 echo "  • B en 401/401  → le correctif est possible, on le fait."
 echo "  • B en 403 sur « aucun en-tête » → INTERDIT : ça casserait toute nouvelle connexion."
 echo "  • C en 500      → confirme que 'throw' est le piège, et qu'on ne l'écrit jamais."
+echo
+echo "RÉSULTAT MESURÉ LE 09/09/2026 (compte 734101502676, eu-west-1) :"
+echo "  A → 403 / 401     B → 500 / 500     C → 500 / 500"
+echo "  Donc B est INDISTINGUABLE de C : la recette documentée par AWS est"
+echo "  INCOMPATIBLE avec un autorisateur à réponse SIMPLE. Renvoyer {errorMessage}"
+echo "  quand enableSimpleResponses est actif est un format de réponse invalide,"
+echo "  et la passerelle répond 500 — pas 401."
+echo "  Le correctif 403→401 n'est donc PAS accessible en l'état. Le livrer aurait"
+echo "  donné 500 sur chaque refus, pour toutes les organisations." 
