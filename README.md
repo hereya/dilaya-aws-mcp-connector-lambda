@@ -212,6 +212,45 @@ that *no* alarm is left without actions once the relay is configured, so a futur
 `alertOn()` fails there instead of surfacing in a sweep six weeks later. Both test files are
 mutation-checked: removing the wiring makes them fail.
 
+## Source layout — the stack is a list of build steps
+
+`lib/dilaya-aws-mcp-connector-lambda-stack.ts` used to be one 3 100-line constructor. It is now a
+short, ordered list of calls into `lib/stack/`, each step a file of at most 220 lines:
+
+```
+lib/stack/context.ts          what the steps hand to each other (+ the field-by-field contract)
+lib/stack/constants.ts        EDGE_LOG_PREFIX, LIB_DIR
+lib/stack/config.ts           the synth environment, read once
+lib/stack/project-env.ts      hereyaProjectEnv split into policy / plain / secret
+lib/stack/*.ts                the connector Lambda, the HTTP API, routes, IAM, the state table
+lib/stack/app-content/*.ts    the flat-vanity-host edge layer (inert without appContentDomain)
+lib/stack/frontend-distribution/*.ts   the legacy per-org *.customDomain distribution
+lib/stack/alarms/*.ts         every alarm, and what each one is blind to
+```
+
+Every construct is still created with the **stack itself** as its scope, so logical ids — and
+therefore the deployed resources — are unchanged by the split.
+
+**Two things about this arrangement are load-bearing.**
+
+1. **The order of the calls in the constructor.** `addToRolePolicy` appends to the connector role in
+   call order, so swapping two steps rewrites the synthesized policy document. A step also reads
+   context fields only an earlier step sets.
+2. **`__dirname` is not where the assets are.** A step lives one or two directories below `lib/`,
+   so asset paths go through `LIB_DIR`, never through the step's own `__dirname`.
+
+### Proving a change to the stack kept the template intact
+
+`npx ts-node --prefer-ts-exts scripts/synth-golden.ts <dir>` synthesizes the stack under four env
+profiles — minimal, custom domain + Cognito + runtime layer, the full production shape, and the
+same features with every optional sub-feature off — and writes one template JSON per profile. Run
+it before a refactor, run it after, `diff -r` the two directories.
+
+Neither `tsc` nor a green `cdk synth` can see a moved resource or a re-ordered policy statement;
+this can. It is what proved the split above changed nothing (105 / 127 / 148 / 120 resources,
+byte-identical). **Run it with `--prefer-ts-exts`**: without it, `ts-node` resolves the stale
+`lib/*.js` left by a previous `tsc` and you will be comparing yesterday's stack against itself.
+
 ## Build & ship
 
 CDK (`iac: cdk`). It **synths from TypeScript via ts-node** (`cdk.json` → `npx ts-node --prefer-ts-exts

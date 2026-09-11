@@ -21,6 +21,24 @@ const { tokenFrom } = require("../lib/alarm-relay/token.js");
 //      only the inputs it declares in hereyarc.yaml; an undeclared or renamed
 //      one is dropped in silence while the deploy goes green (2026-08-07, three
 //      releases that created nothing).
+/** Every TypeScript source under lib/, concatenated. */
+function readLibSources(): string {
+  const root = path.join(__dirname, "..", "lib");
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
+        out.push(fs.readFileSync(full, "utf8"));
+      }
+    }
+  };
+  walk(root);
+  if (!out.length) throw new Error(`no sources found under ${root}`);
+  return out.join("\n");
+}
+
 describe("connector alarm → SNS → Telegram relay", () => {
   let tmpRoot: string;
   const saved = { ...process.env };
@@ -149,10 +167,11 @@ describe("connector alarm → SNS → Telegram relay", () => {
   // The names are the contract with release.yml and with hereyarc.yaml. Renaming
   // either side is the 2026-08-07 failure: green deploy, nothing created.
   test("reads the inputs under the same names dilaya/aws-sqlite-data uses", () => {
-    const stack = fs.readFileSync(
-      path.join(__dirname, "..", "lib", "dilaya-aws-mcp-connector-lambda-stack.ts"),
-      "utf8"
-    );
+    // Scans the whole of lib/ rather than one file: the stack used to be a
+    // single 3 100-line constructor, and a guard naming that one path reads as
+    // green the day the code moves — the failure mode is a check that no longer
+    // checks anything. Reading the tree survives any further split.
+    const stack = readLibSources();
     expect(stack).toContain('process.env["telegramBotTokenParam"]');
     expect(stack).toContain('process.env["telegramChatId"]');
 
