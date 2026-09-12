@@ -46,6 +46,7 @@ import { createRateGuardAlarm } from "./stack/alarms/rate-guard";
 import { createRequestCapAlarm } from "./stack/alarms/request-cap";
 import { createPlatform5xxAlarm } from "./stack/alarms/platform-5xx";
 import { createAppStateAlarms } from "./stack/alarms/dynamodb";
+import { createFilesDomain } from "./stack/files-domain";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -163,5 +164,9 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     createRequestCapAlarm(this, ctx);
     createPlatform5xxAlarm(this, ctx);
     createAppStateAlarms(this, ctx);
+
+    // Last on purpose: it only adds resources and one env var, so appending it
+    // cannot re-order anything the steps above synthesized.
+    createFilesDomain(this, ctx);
   }
 }

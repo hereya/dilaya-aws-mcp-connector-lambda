@@ -54,6 +54,23 @@ vanity-host request to the existing `/o/<org>/<app>/{site|auth}/…` route and t
 `x-dilaya-app-host`. The connector regenerates that map at runtime (`GetFunction` → `UpdateFunction`
 → `PublishFunction`) as apps are given hosts; the cert + DNS are static and never change per host.
 
+## Presigned file URLs on a Dilaya host — optional
+
+With `filesDomain` + `filesZoneId` + `filesCertArn`, `lib/stack/files-domain.ts` stands up a pass-through
+CloudFront distribution in front of the `hereya/aws-file-storage` bucket (`bucketName`, read from
+`hereyaProjectEnv`), A/AAAA records for `filesDomain`, and `FILES_PUBLIC_HOST` on the connector —
+which then swaps only the HOST of every presigned URL. Why: sandboxed environments (Claude Cowork,
+ChatGPT work) block `*.amazonaws.com`.
+
+Nothing is re-signed. A presigned SigV4 URL covers `Host`, and it still verifies because CloudFront
+sends an S3 origin the origin's own host. That holds only for the exact shape the tests pin: an S3
+origin **without** OAC/OAI (the authorization is in the query string and S3 still decides),
+`Managed-AllViewerExceptHostHeader`, `Managed-CachingDisabled`, every method. Proven end to end on
+throwaway resources before this was written: GET 200, tampered signature 403, PUT 1 KB, PUT 150 MB
+over 77 s, multipart — all 200. The certificate is passed in (us-east-1), like the app-content one.
+Absent `filesDomain` → nothing is created. The step is appended LAST in the constructor, so the
+golden templates are byte-identical with the feature off.
+
 ## `hereyaProjectEnv` contract
 
 - `iamPolicy*` keys → attached to the Lambda role as IAM policies.
