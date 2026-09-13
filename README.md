@@ -157,6 +157,20 @@ them with the rest of the row (60 s cache; a row without the columns = off).
 Pinned in `test/auth-passkey-{pages,signin,register}.test.ts` (Cognito mocked, Data API +
 registry faked — `test/helpers/auth-lambda-passkey.ts`).
 
+## No address enumeration on the login page (t_login_enumeration, 0.1.74)
+
+The shared login page used to answer « No account found for this email » — a different page for an
+unknown address than for a known one, i.e. an oracle over a customer's user list, address by address.
+Every address now gets the SAME code page (« if this address has access, a code has just been sent »).
+An address that gets no code (not allowlisted, unknown to Cognito, auth not enabled) carries a
+**decoy session**: 600 random bytes + a 32-byte HMAC tail under a key derived from the capability
+secret, base64 like the real ones, so `verify` recognises it without storing anything and answers
+« incorrect code » — exactly what a wrong code on a real session gets — without asking Cognito. A
+small jitter stands in for the Cognito + Postmark round-trips of the real path. `passkey/start`
+answers an off-list address like one without a passkey (`no_passkey`), so the client falls back to
+the uniform e-mail path. One `auth_no_code` log line (app + reason, never the address). Without a
+capability secret (local runs) the key is per-process. `test/auth-no-enumeration.test.ts`.
+
 ## The state table's recovery path
 
 `AppStateTable` started life as cheap "is there something new?" flags, and the comment above it still
