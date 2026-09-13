@@ -7,14 +7,15 @@ const mockSend = jest.fn();
 class Cmd { input: unknown; constructor(input: unknown) { this.input = input; } }
 class StartWebAuthnRegistrationCommand extends Cmd {}
 class CompleteWebAuthnRegistrationCommand extends Cmd {}
-jest.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = mockSend; }, InitiateAuthCommand: class extends Cmd {}, RespondToAuthChallengeCommand: class extends Cmd {}, StartWebAuthnRegistrationCommand, CompleteWebAuthnRegistrationCommand }), { virtual: true });
+class AdminSetUserPasswordCommand extends Cmd {}
+jest.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = mockSend; }, InitiateAuthCommand: class extends Cmd {}, RespondToAuthChallengeCommand: class extends Cmd {}, StartWebAuthnRegistrationCommand, CompleteWebAuthnRegistrationCommand, AdminSetUserPasswordCommand }), { virtual: true });
 jest.mock("@aws-sdk/client-s3", () => ({ S3Client: class {}, GetObjectCommand: class {} }), { virtual: true });
 jest.mock("@aws-sdk/client-ssm", () => ({ SSMClient: class {}, GetParameterCommand: class {} }), { virtual: true });
 jest.mock("@aws-sdk/client-secrets-manager", () => ({ SecretsManagerClient: class {}, GetSecretValueCommand: class {} }), { virtual: true });
 jest.mock("@aws-sdk/client-dynamodb", () => ({ DynamoDBClient: class {} }), { virtual: true });
 jest.mock("@aws-sdk/lib-dynamodb", () => ({ DynamoDBDocumentClient: { from: () => mockRegistry() }, GetCommand: class extends Cmd {} }), { virtual: true });
 
-import { ev, installDataApiFake, registryFake, cookieNamed, RP, type Res } from "./helpers/auth-lambda-passkey";
+import { ev, installDataApiFake, registryFake, cookieNamed, fakeAccessToken, RP, type Res } from "./helpers/auth-lambda-passkey";
 function mockRegistry() { return registryFake(); }
 installDataApiFake();
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -92,22 +93,43 @@ describe("POST passkey/register/start", () => {
 
 describe("POST passkey/register/finish", () => {
   const credential = { id: "c1", rawId: "c1", type: "public-key", response: { attestationObject: "att", clientDataJSON: "cdj" } };
-  it("completes the registration with the credential as an OBJECT, drops the AccessToken cookie, marks the device", async () => {
-    mockSend.mockResolvedValueOnce({});
-    const r = await run(ev("POST", "pk", "passkey/register/finish", { cookie: "dilaya_at=AC.CESS.TOK", json: { credential } }));
+  const AT = fakeAccessToken("u-sub-1");
+  it("completes the registration (credential as an OBJECT), then CONFIRMS the user, drops the AccessToken cookie, marks the device", async () => {
+    mockSend.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+    const r = await run(ev("POST", "pk", "passkey/register/finish", { cookie: `dilaya_at=${AT}`, json: { credential } }));
     expect(r.statusCode).toBe(200);
-    expect(json(r)).toEqual({ ok: true });
+    expect(json(r)).toEqual({ ok: true, confirmed: true });
     expect(mockSend.mock.calls[0][0]).toBeInstanceOf(CompleteWebAuthnRegistrationCommand);
-    expect(lastInput()).toEqual({ AccessToken: "AC.CESS.TOK", Credential: credential });
+    expect((mockSend.mock.calls[0][0] as Cmd).input).toEqual({ AccessToken: AT, Credential: credential });
+    // Cognito offers the WEB_AUTHN challenge only to a CONFIRMED user; an
+    // admin-created one is FORCE_CHANGE_PASSWORD until a permanent password is
+    // set — a random one nobody knows (proven in prod, 2026-09-13).
+    expect(mockSend.mock.calls[1][0]).toBeInstanceOf(AdminSetUserPasswordCommand);
+    const confirm = lastInput() as { UserPoolId: string; Username: string; Permanent: boolean; Password: string };
+    expect(confirm.UserPoolId).toBe("eu-west-1_PK");
+    expect(confirm.Username).toBe("u-sub-1");
+    expect(confirm.Permanent).toBe(true);
+    expect(confirm.Password.length).toBeGreaterThanOrEqual(24);
+    expect(confirm.Password).toMatch(/[A-Z]/);
+    expect(confirm.Password).toMatch(/[a-z]/);
+    expect(confirm.Password).toMatch(/[0-9]/);
+    expect(confirm.Password).toMatch(/[^A-Za-z0-9]/);
     expect(cookieNamed(r, "dilaya_at")).toContain("dilaya_at=; ");
     expect(cookieNamed(r, "dilaya_at")).toContain("Max-Age=0");
     expect(cookieNamed(r, "dilaya_pk")).toContain("dilaya_pk=1;");
   });
+  it("registration ok but confirmation refused: still ok (the passkey exists), flagged confirmed:false", async () => {
+    mockSend.mockResolvedValueOnce({}).mockRejectedValueOnce(Object.assign(new Error("denied"), { name: "AccessDeniedException" }));
+    const r = await run(ev("POST", "pk", "passkey/register/finish", { cookie: `dilaya_at=${AT}`, json: { credential } }));
+    expect(json(r)).toEqual({ ok: true, confirmed: false });
+    expect(cookieNamed(r, "dilaya_pk")).toContain("dilaya_pk=1;");
+  });
   it("reports the Cognito error name, keeps the session untouched; 401 without the cookie", async () => {
     mockSend.mockRejectedValueOnce(Object.assign(new Error("dup"), { name: "WebAuthnCredentialNotSupportedException" }));
-    const r = await run(ev("POST", "pk", "passkey/register/finish", { cookie: "dilaya_at=T", json: { credential } }));
+    const r = await run(ev("POST", "pk", "passkey/register/finish", { cookie: `dilaya_at=${AT}`, json: { credential } }));
     expect(json(r)).toEqual({ ok: false, error: "WebAuthnCredentialNotSupportedException" });
     expect(cookieNamed(r, "dilaya_pk")).toBeNull();
+    expect(mockSend).toHaveBeenCalledTimes(1); // no confirmation without a registered passkey
     expect((await run(ev("POST", "pk", "passkey/register/finish", { json: { credential } }))).statusCode).toBe(401);
     expect(json(await run(ev("POST", "pk", "passkey/register/finish", { cookie: "dilaya_at=T", json: {} })))).toEqual({ ok: false, error: "missing_credential" });
   });

@@ -119,6 +119,12 @@ them with the rest of the row (60 s cache; a row without the columns = off).
   (`CompleteWebAuthnRegistration`, credential as an object). Done or declined, the session
   cookie was already set. `dilaya_pk=1` (1 y) marks a device that registered, so the offer is not
   repeated into an "already registered" dialog.
+- **Registration also CONFIRMS the user.** Cognito offers the `WEB_AUTHN` challenge only to a
+  `CONFIRMED` user, and every app user is admin-created, i.e. `FORCE_CHANGE_PASSWORD` for life
+  (the OTP flow never changes the status) — in that state `USER_AUTH` answers with password factors
+  only, whatever passkeys the user holds (proven in prod, 2026-09-13). So `register/finish`, after
+  `CompleteWebAuthnRegistration`, sets a random **permanent** password nobody knows
+  (`AdminSetUserPassword`, 0.1.71); the response carries `confirmed:true|false`.
 - **One passkey = one host.** The rpId is the app's principal host (verified custom domain, else
   the vanity host — chosen by the connector); the staging host, secondary domains and the path
   URL keep the OTP (`passkeyHostMatches`). Browsers enforce the same rule; the gate only keeps
