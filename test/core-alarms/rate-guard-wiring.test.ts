@@ -29,6 +29,25 @@ describe("rate guard wiring (what the stack actually sends)", () => {
     expect(authorizerEnv().FRONTEND_RATE_LIMIT).toBe("1000");
   });
 
+  // The long window (t_rate_guard_sustained) ships in COUNT mode, and the
+  // stack must SAY so — the same polarity trap as above, mirrored: a stack
+  // that stamped "true" here would flip a count-mode guard into a brake.
+  test("the long window is stamped in COUNT mode with its measured defaults", () => {
+    const env = authorizerEnv();
+    expect(env.FRONTEND_RATE_WINDOW_BLOCK).toBe("false");
+    expect(env.FRONTEND_RATE_WINDOW_LIMIT).toBe("2000");
+    expect(env.FRONTEND_RATE_WINDOW_MINUTES).toBe("15");
+  });
+
+  test("and the long window's brake can be switched on from the deploy", () => {
+    const env = authorizerEnv({
+      frontendRateWindowBlock: "true",
+      frontendRateWindowLimit: "2500",
+    });
+    expect(env.FRONTEND_RATE_WINDOW_BLOCK).toBe("true");
+    expect(env.FRONTEND_RATE_WINDOW_LIMIT).toBe("2500");
+  });
+
   test("and the off switch still reaches it", () => {
     expect(authorizerEnv({ frontendRateBlock: "false" }).FRONTEND_RATE_BLOCK).toBe(
       "false"

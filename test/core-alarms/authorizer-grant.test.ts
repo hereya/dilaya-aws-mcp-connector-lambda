@@ -33,7 +33,7 @@ describe("frontend authorizer table grant", () => {
     // count the plan's request cap is enforced against.
     expect(
       st.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"]
-    ).toEqual(["reqcount#*", "ratecount#*", "reqcountorg#*"]);
+    ).toEqual(["reqcount#*", "ratecount#*", "ratewin#*", "reqcountorg#*"]);
   });
 
   // grantReadWriteData would have been one word shorter and would have put the
