@@ -50,6 +50,31 @@ describe("app-content host-routing (appContentDomain set)", () => {
     });
   });
 
+  // A cookie CloudFront strips is a SILENT no-op at the origin: the auth Lambda
+  // sets it, the browser holds it, the Lambda never sees it again. Learned in
+  // prod on 2026-09-13 — the passkey offer page redirected straight through
+  // because `dilaya_at` was not in this allowlist (t_auth_passkey). The origin
+  // policy is SHARED with every BYOD distribution (referenced by id), so the
+  // ONE list here is the contract for both surfaces; the cache policy mirrors
+  // it (CloudFront requires the origin set ⊇ the cache-key set).
+  const SESSION_COOKIES = ["dilaya_id_token", "hereya_id_token", "dilaya_agent", "dilaya_at", "dilaya_last_email", "dilaya_pk"];
+
+  it("forwards EVERY cookie the auth Lambda sets — session, passkey offer, last e-mail, device mark", () => {
+    const t = build();
+    t.hasResourceProperties("AWS::CloudFront::OriginRequestPolicy", {
+      OriginRequestPolicyConfig: Match.objectLike({
+        CookiesConfig: { CookieBehavior: "whitelist", Cookies: Match.arrayWith(SESSION_COOKIES) },
+      }),
+    });
+    t.hasResourceProperties("AWS::CloudFront::CachePolicy", {
+      CachePolicyConfig: Match.objectLike({
+        ParametersInCacheKeyAndForwardedToOrigin: Match.objectLike({
+          CookiesConfig: { CookieBehavior: "whitelist", Cookies: Match.arrayWith(SESSION_COOKIES) },
+        }),
+      }),
+    });
+  });
+
   it("points a Route53 A + AAAA wildcard *.dilaya-apps.eu at the content distribution", () => {
     const t = build();
     const dists = t.findResources("AWS::CloudFront::Distribution");
