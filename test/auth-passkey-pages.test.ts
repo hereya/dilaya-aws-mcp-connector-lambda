@@ -66,14 +66,35 @@ describe("loginPage — the passkey button only when the flag says so", () => {
   });
 });
 
+// The pages use RELATIVE endpoints, resolved by the browser against the page's
+// own URL. The login page lives at /auth/login (base /auth/), the offer page at
+// /auth/passkey/register (base /auth/passkey/): the SAME literal resolves to
+// different paths. Shipped wrong on 2026-09-13 (0.1.68: "passkey/register/start"
+// from the offer page → /auth/passkey/passkey/register/start → 404, instant
+// "could not be set up"). Resolve like the browser does, on both URL shapes.
+describe("relative endpoints resolve to the Lambda's routes from each page's own URL", () => {
+  const endpoints = (html: string) => [...html.matchAll(/post\("([^"]+)"/g)].map((m) => m[1]!);
+  const resolve = (rel: string, page: string) => new URL(rel, page).pathname;
+  it("login page → /auth/passkey/{start,finish} on a host, and under /o/… on the path URL", () => {
+    const eps = endpoints(loginPage("/ret", null, null, "fr", "", true));
+    expect(eps.map((e) => resolve(e, "https://app.acme.fr/auth/login?return_url=%2F"))).toEqual(["/auth/passkey/start", "/auth/passkey/finish"]);
+    expect(eps.map((e) => resolve(e, "https://app.dilaya.eu/o/org/app/auth/login"))).toEqual(["/o/org/app/auth/passkey/start", "/o/org/app/auth/passkey/finish"]);
+  });
+  it("offer page → /auth/passkey/register/{start,finish} on a host, and under /o/… on the path URL", () => {
+    const eps = endpoints(registerPage("/ret", null, "fr"));
+    expect(eps.map((e) => resolve(e, "https://app.acme.fr/auth/passkey/register?return_url=%2F"))).toEqual(["/auth/passkey/register/start", "/auth/passkey/register/finish"]);
+    expect(eps.map((e) => resolve(e, "https://app.dilaya.eu/o/org/app/auth/passkey/register"))).toEqual(["/o/org/app/auth/passkey/register/start", "/o/org/app/auth/passkey/register/finish"]);
+  });
+});
+
 describe("registerPage — the post-OTP offer", () => {
   it("renders branded, with the register endpoints and an escaped 'later' link", () => {
     const html = registerPage('/ret?x=1"', { loginTitle: "Mon espace", logoUrl: "https://x.fr/l.png" }, "fr");
     expect(html).toContain("<title>Mon espace</title>");
     expect(html).toContain('class="login-logo" src="https://x.fr/l.png"');
     expect(html).toContain("Enregistrer une passkey");
-    expect(html).toContain('"passkey/register/start"');
-    expect(html).toContain('"passkey/register/finish"');
+    expect(html).toContain('post("register/start"');
+    expect(html).toContain('post("register/finish"');
     expect(html).toContain("navigator.credentials.create");
     expect(html).toContain('href="/ret?x=1&quot;"');
     expect(html).toContain("Plus tard");
