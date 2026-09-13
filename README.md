@@ -54,6 +54,24 @@ vanity-host request to the existing `/o/<org>/<app>/{site|auth}/…` route and t
 `x-dilaya-app-host`. The connector regenerates that map at runtime (`GetFunction` → `UpdateFunction`
 → `PublishFunction`) as apps are given hosts; the cert + DNS are static and never change per host.
 
+### Host-map value flags, and the login gate (0.1.73)
+
+Each host's KVS value is `{ o, a, p?, r?, e?, x?, auth?, pub? }`, written by the connector
+(`desiredKvsState`) and read by the viewer-request function (`lib/stack/app-content/router-function.ts`
+— its comment lines are stripped at synth, the edge has a 10 KB code budget): `o`/`a` org + app,
+`p` static-section prefixes, `r` canonical-redirect host, `e:"s"` staging, `x` stopped (1 paused
+org, 2 past its monthly allowance), and since 0.1.73 **`auth: 1`** — *the platform closes the site*
+(t_frontend_auth_default): a request with no session cookie (`dilaya_id_token` / `hereya_id_token` /
+`dilaya_agent`) is answered at the edge with a 302 to `/auth/login?return_url=<path>` (`/api/*`: 401
+JSON), except `/auth/*`, `/static/*` and the app's **`pub`** prefixes (`"/"` = the root page only).
+That is a presence check (no crypto at the edge) — the UX, and the only thing that can protect a
+STATIC section (S3 never reaches an authorizer). The guard is the **frontend authorizer**: for an app
+whose registry row carries `authEnforce: true` it REFUSES (403) an anonymous request for any site path
+outside `publicPaths` / `/static/*`, and fails closed when the pool row or the registry cannot be
+read. Apps without the flag keep the legacy contract (authorized, anonymous — their handler decides).
+The auth Lambda's session cookie now lives exactly as long as the ID token (`idTokenMaxAge`, 1 h by
+default) instead of a flat 24 h, so an honest browser's "cookie present" means "token still valid".
+
 ## Presigned file URLs on a Dilaya host — optional
 
 With `filesDomain` + `filesZoneId` + `filesCertArn`, `lib/stack/files-domain.ts` stands up a pass-through
