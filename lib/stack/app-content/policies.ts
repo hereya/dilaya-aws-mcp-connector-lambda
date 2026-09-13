@@ -2,6 +2,26 @@ import * as cdk from "aws-cdk-lib/core";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import type { StackContext } from "../context";
 
+// EVERY cookie the auth Lambda sets or reads. CloudFront strips a cookie that
+// is not listed here — silently, at the edge — so a cookie the Lambda sets and
+// then expects back is a no-op unless it is in this list (the passkey offer
+// page bounced straight through in prod on 2026-09-13 for exactly that reason,
+// t_auth_passkey). The origin-request policy below is SHARED with every BYOD
+// per-org distribution, so this one list covers both surfaces.
+//   dilaya_id_token / hereya_id_token — the session (current / legacy name)
+//   dilaya_agent                      — the agent-session cookie
+//   dilaya_at                         — passkey registration: 5-min AccessToken
+//   dilaya_last_email                 — login e-mail pre-fill
+//   dilaya_pk                         — "this device registered a passkey"
+const SESSION_COOKIES = [
+  "dilaya_id_token",
+  "hereya_id_token",
+  "dilaya_agent",
+  "dilaya_at",
+  "dilaya_last_email",
+  "dilaya_pk",
+];
+
 export function createAppContentPolicies(stack: cdk.Stack, ctx: StackContext): void {
   const { frontendForwardHeaders } = ctx;
 
@@ -14,11 +34,7 @@ export function createAppContentPolicies(stack: cdk.Stack, ctx: StackContext): v
       minTtl: cdk.Duration.seconds(0),
       defaultTtl: cdk.Duration.seconds(0),
       maxTtl: cdk.Duration.days(365),
-      cookieBehavior: cloudfront.CacheCookieBehavior.allowList(
-        "dilaya_id_token",
-        "hereya_id_token",
-        "dilaya_agent"
-      ),
+      cookieBehavior: cloudfront.CacheCookieBehavior.allowList(...SESSION_COOKIES),
       headerBehavior: cloudfront.CacheHeaderBehavior.none(),
       queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
       enableAcceptEncodingGzip: true,
@@ -34,14 +50,10 @@ export function createAppContentPolicies(stack: cdk.Stack, ctx: StackContext): v
     stack,
     "AppContentOriginPolicy",
     {
-      // The frontend session cookies the auth Lambda sets +
-      // the frontend authorizer reads (dilaya_* current, hereya_id_token
-      // legacy). CloudFront strips any cookie not listed.
-      cookieBehavior: cloudfront.OriginRequestCookieBehavior.allowList(
-        "dilaya_id_token",
-        "hereya_id_token",
-        "dilaya_agent"
-      ),
+      // The frontend session cookies the auth Lambda sets + the frontend
+      // authorizer reads — see SESSION_COOKIES above. CloudFront strips any
+      // cookie not listed.
+      cookieBehavior: cloudfront.OriginRequestCookieBehavior.allowList(...SESSION_COOKIES),
       // Base forwarded set + `x-dilaya-app-host` (added to
       // frontendForwardHeaders above when appContentDomain is set).
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList(

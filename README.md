@@ -124,6 +124,12 @@ them with the rest of the row (60 s cache; a row without the columns = off).
   URL keep the OTP (`passkeyHostMatches`). Browsers enforce the same rule; the gate only keeps
   the button from appearing where it could only fail.
 
+- **Cookies must be forwarded.** CloudFront strips every cookie not on the app-content
+  origin-request policy's allowlist (`lib/stack/app-content/policies.ts`, `SESSION_COOKIES` — shared
+  by id with every BYOD distribution), silently: in prod on 2026-09-13 the offer page bounced
+  straight through because `dilaya_at` never reached the Lambda. Any new cookie the auth Lambda
+  reads goes on that list first (0.1.69).
+
 Pinned in `test/auth-passkey-{pages,signin,register}.test.ts` (Cognito mocked, Data API +
 registry faked — `test/helpers/auth-lambda-passkey.ts`).
 
