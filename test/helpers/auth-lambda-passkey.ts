@@ -17,7 +17,7 @@ export const RP = "pk-acme.dilaya-apps.eu";
 // _auth_config rows by app name: `pk` has passkeys on (rp = RP), `nopk` is an
 // older row without the passkey columns at all, `pkoff` has them but off.
 const authRows: Record<string, Record<string, unknown>> = {
-  pk: { user_pool_client_id: "client-pk", from_email: "noreply@pk.test", passkeys: 1, passkey_rp_id: RP },
+  pk: { user_pool_id: "eu-west-1_PK", user_pool_client_id: "client-pk", from_email: "noreply@pk.test", passkeys: 1, passkey_rp_id: RP },
   nopk: { user_pool_client_id: "client-nopk", from_email: null },
   pkoff: { user_pool_client_id: "client-off", from_email: null, passkeys: 0, passkey_rp_id: RP },
 };
@@ -97,6 +97,10 @@ export interface Res {
   cookies?: string[];
   body: string;
 }
+
+/** An unsigned JWT-shaped access token carrying Cognito's `username` claim. */
+export const fakeAccessToken = (username: string) =>
+  `h.${Buffer.from(JSON.stringify({ username, scope: "aws.cognito.signin.user.admin" })).toString("base64url")}.s`;
 
 export const cookieNamed = (res: Res, name: string) =>
   (res.cookies ?? []).find((c) => c.startsWith(name + "=")) ?? null;

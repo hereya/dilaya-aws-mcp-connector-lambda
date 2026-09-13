@@ -1,7 +1,7 @@
 // Passkeys (t_auth_passkey) — pure seams of the auth Lambda: the host-vs-rpId
 // gate, the integer-aware row reader, the scoped cookie helper, and the
 // login / register page renderers.
-jest.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class {}, InitiateAuthCommand: class {}, RespondToAuthChallengeCommand: class {}, StartWebAuthnRegistrationCommand: class {}, CompleteWebAuthnRegistrationCommand: class {} }), { virtual: true });
+jest.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class {}, InitiateAuthCommand: class {}, RespondToAuthChallengeCommand: class {}, StartWebAuthnRegistrationCommand: class {}, CompleteWebAuthnRegistrationCommand: class {}, AdminSetUserPasswordCommand: class {} }), { virtual: true });
 jest.mock("@aws-sdk/client-s3", () => ({ S3Client: class {}, GetObjectCommand: class {} }), { virtual: true });
 jest.mock("@aws-sdk/client-ssm", () => ({ SSMClient: class {}, GetParameterCommand: class {} }), { virtual: true });
 jest.mock("@aws-sdk/client-secrets-manager", () => ({ SecretsManagerClient: class {}, GetSecretValueCommand: class {} }), { virtual: true });

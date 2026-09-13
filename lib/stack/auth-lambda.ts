@@ -78,6 +78,11 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
         "cognito-idp:RespondToAuthChallenge",
         "cognito-idp:StartWebAuthnRegistration",
         "cognito-idp:CompleteWebAuthnRegistration",
+        // Admin API (IAM-authorized, unlike the four above): after a passkey
+        // is registered the Lambda sets a random PERMANENT password so the
+        // user becomes CONFIRMED — the only status Cognito offers the
+        // WEB_AUTHN challenge to (t_auth_passkey, proven in prod 2026-09-13).
+        "cognito-idp:AdminSetUserPassword",
       ],
       resources: ["*"],
     })
