@@ -96,6 +96,37 @@ as *"this app has no auth config"*: a logged-in visitor is served as anonymous a
 the connector logged 0 errors through the same bounce precisely because its client retried.
 Unit-pinned for both copies in `test/dataapi-retry.test.ts`.
 
+## Passkeys on the auth Lambda (t_auth_passkey)
+
+The shared `auth-lambda` also serves a **WebAuthn passkey** sign-in, Cognito-native — the Lambda
+stores and verifies nothing. The connector's `enable-auth` turns it on per app (pool
+`SignInPolicy` `WEB_AUTHN`, `SetUserPoolMfaConfig.WebAuthnConfiguration.RelyingPartyId`, client
+`ALLOW_USER_AUTH`) and writes `passkeys` / `passkey_rp_id` on `_auth_config`; the Lambda reads
+them with the rest of the row (60 s cache; a row without the columns = off).
+
+- **Sign-in:** the login page pre-fills the e-mail (`dilaya_last_email`, HttpOnly, 90 d) and, on the
+  rpId host only, reveals a "Sign in with a passkey" button. `POST auth/passkey/start` →
+  `InitiateAuth(USER_AUTH, PREFERRED_CHALLENGE=WEB_AUTHN)` → the `CREDENTIAL_REQUEST_OPTIONS`
+  string goes to `navigator.credentials.get` → `POST auth/passkey/finish` →
+  `RespondToAuthChallenge(WEB_AUTHN, CREDENTIAL=<JSON string>)` → the **same** `dilaya_id_token`
+  cookie an OTP sets (the frontend authorizer is untouched). Every miss (no passkey for that
+  e-mail, cancelled dialog, Cognito error) submits the OTP form with `passkey_fallback` — the code
+  page then says why. Never a dead end.
+- **Registration:** after a successful OTP on the rpId host, `POST verify` 302s to
+  `GET auth/passkey/register` with the fresh **AccessToken in a 5-minute HttpOnly cookie**
+  (`dilaya_at`, never in HTML); "Set up on this device" → `POST auth/passkey/register/start`
+  (`StartWebAuthnRegistration`) → `navigator.credentials.create` → `POST …/register/finish`
+  (`CompleteWebAuthnRegistration`, credential as an object). Done or declined, the session
+  cookie was already set. `dilaya_pk=1` (1 y) marks a device that registered, so the offer is not
+  repeated into an "already registered" dialog.
+- **One passkey = one host.** The rpId is the app's principal host (verified custom domain, else
+  the vanity host — chosen by the connector); the staging host, secondary domains and the path
+  URL keep the OTP (`passkeyHostMatches`). Browsers enforce the same rule; the gate only keeps
+  the button from appearing where it could only fail.
+
+Pinned in `test/auth-passkey-{pages,signin,register}.test.ts` (Cognito mocked, Data API +
+registry faked — `test/helpers/auth-lambda-passkey.ts`).
+
 ## The state table's recovery path
 
 `AppStateTable` started life as cheap "is there something new?" flags, and the comment above it still
