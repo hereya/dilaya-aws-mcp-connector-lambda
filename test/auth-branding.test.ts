@@ -17,7 +17,7 @@ jest.mock(
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { __test__ } = require("../lib/auth-lambda/index.js");
-const { rowByName, sanitizeCss, loginPage, otpPage } = __test__;
+const { rowByName, sanitizeCss, loginPage, otpPage, registerPage, pickLang, accentStyle } = __test__;
 
 describe("rowByName", () => {
   it("maps the first record by column name", () => {
@@ -104,5 +104,63 @@ describe("otpPage branding", () => {
     const html = otpPage("sess", "a@b.fr", "/ret", null, null, null, "en");
     expect(html).toContain("<h1>Check your email</h1>");
     expect(html).toContain("<title>Verification code</title>");
+  });
+});
+
+// t_login_page_lang_brand (Jonatan, 13/09/2026): a French app's custom title sat
+// over English platform strings because the language came from the browser
+// only; and a hand-written custom_css styled the login button but not the OTP
+// page's secondary "resend" button. The app now states its language and ONE
+// accent color that the shared stylesheet applies to every page.
+describe("pickLang", () => {
+  it("the app's stored lang wins over Accept-Language", () => {
+    expect(pickLang({ headers: { "accept-language": "en-US,en;q=0.9" } }, { lang: "fr" })).toBe("fr");
+    expect(pickLang({ headers: { "accept-language": "fr-FR" } }, { lang: "en" })).toBe("en");
+  });
+  it("no stored lang: the browser decides (fr* → fr, else en)", () => {
+    expect(pickLang({ headers: { "accept-language": "fr-CA" } }, null)).toBe("fr");
+    expect(pickLang({ headers: { "accept-language": "de" } }, { lang: null })).toBe("en");
+    expect(pickLang({ headers: {} }, { lang: "xx" })).toBe("en");
+  });
+});
+
+describe("accentStyle", () => {
+  it("one #rrggbb color → the accent variables (hover, soft, ring derived)", () => {
+    const css = accentStyle("#B4532A");
+    expect(css).toContain("--accent:#b4532a");
+    expect(css).toMatch(/--accent-hover:#[0-9a-f]{6}/);
+    expect(css).toMatch(/--accent-soft:#[0-9a-f]{6}/);
+    expect(css).toContain("--accent-ring:rgba(180,83,42,");
+  });
+  it("anything but #rrggbb is ignored (no injection through the color)", () => {
+    expect(accentStyle("red")).toBe("");
+    expect(accentStyle("#b4532a;}body{display:none}")).toBe("");
+    expect(accentStyle(null)).toBe("");
+  });
+});
+
+describe("accent color on every page", () => {
+  const b = { accentColor: "#b4532a", customCss: "h1{color:blue}" };
+  it("login, OTP and passkey pages carry the variables, BEFORE custom_css", () => {
+    const pages = [
+      loginPage("/r", null, b, "fr", ""),
+      otpPage("s", "a@b.fr", "/r", null, null, b, "fr"),
+      registerPage("/r", b, "fr"),
+    ];
+    for (const html of pages) {
+      const accent = html.indexOf("--accent:#b4532a");
+      const custom = html.indexOf("<style>h1{color:blue}</style>");
+      expect(accent).toBeGreaterThan(0);
+      expect(custom).toBeGreaterThan(accent);
+    }
+  });
+  it("the shared stylesheet drives buttons, the secondary (resend) button, focus and links from the variables", () => {
+    const html = otpPage("s", "a@b.fr", "/r", null, null, null, "fr");
+    expect(html).toContain("Renvoyer le code");
+    expect(html).toMatch(/button \{[^}]*background: var\(--accent\)/);
+    expect(html).toMatch(/button\.secondary \{[^}]*color: var\(--accent\)/);
+    expect(html).toMatch(/input:focus \{[^}]*var\(--accent\)/);
+    expect(html).toMatch(/\.back-link \{[^}]*var\(--accent\)/);
+    expect(html).not.toContain("--accent:#");
   });
 });
