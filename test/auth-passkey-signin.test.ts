@@ -81,7 +81,7 @@ describe("POST passkey/finish", () => {
     expect(json(r)).toEqual({ redirect: "/dash" });
     expect(mockSend.mock.calls[0][0]).toBeInstanceOf(RespondToAuthChallengeCommand);
     expect(lastInput()).toEqual({ ChallengeName: "WEB_AUTHN", ClientId: "client-pk", Session: "S1", ChallengeResponses: { USERNAME: "jo@acme.fr", CREDENTIAL: JSON.stringify(credential) } });
-    expect(cookieNamed(r, "dilaya_id_token")).toBe(`dilaya_id_token=ID.TOK.EN; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=${RP}; Max-Age=86400`);
+    expect(cookieNamed(r, "dilaya_id_token")).toBe(`dilaya_id_token=ID.TOK.EN; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=${RP}; Max-Age=3600`); // a fake token has no readable exp → the 1 h fallback (t_frontend_auth_default)
     expect(cookieNamed(r, "dilaya_last_email")).toContain("jo%40acme.fr; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=" + RP + "; Max-Age=7776000");
     expect(cookieNamed(r, "dilaya_pk")).toContain("dilaya_pk=1;");
   });

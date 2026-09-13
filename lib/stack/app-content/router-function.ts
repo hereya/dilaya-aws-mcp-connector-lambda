@@ -1,15 +1,34 @@
 import * as cdk from "aws-cdk-lib/core";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import type { StackContext } from "../context";
+import {
+  CLOUDFRONT_FUNCTION_MAX_BYTES,
+  STOP_PAGE_ALLOWANCE,
+  STOP_PAGE_PAUSED,
+  stripCommentLines,
+} from "./router-stop-pages";
+import { LOGIN_GATE_BRANCH } from "./router-login-gate";
 
-export function createAppHostRouter(stack: cdk.Stack, ctx: StackContext): void {
-  const { appHostKvs, appLambdaNamePrefix, domainName, staticAssetsBucket } = ctx;
-        const appHostRouterFn = new cloudfront.Function(stack, "AppHostRouter", {
-          functionName: `${appLambdaNamePrefix}apphost-router`,
-          runtime: cloudfront.FunctionRuntime.JS_2_0,
-          keyValueStore: appHostKvs,
-          code: cloudfront.FunctionCode.fromInline(`import cf from 'cloudfront';
+/**
+ * The viewer-request function's SOURCE, comments included — read this, ship
+ * `routerFunctionCode()`. Every `//` line below is stripped before synth (the
+ * edge has a 10 KB code budget); the code lines ship byte-identical.
+ */
+export function routerFunctionSource(staticBucketDomain: string): string {
+  return `import cf from 'cloudfront';
 const kvs = cf.kvs();
+function qsOf(request) {
+  var qs = request.querystring;
+  var parts = [];
+  for (var k in qs) {
+    if (qs[k].multiValue) {
+      for (var j = 0; j < qs[k].multiValue.length; j++) parts.push(k + '=' + qs[k].multiValue[j].value);
+    } else {
+      parts.push(k + '=' + qs[k].value);
+    }
+  }
+  return parts.length ? '?' + parts.join('&') : '';
+}
 async function handler(event) {
   var request = event.request;
   var host = request.headers.host.value.toLowerCase();
@@ -23,31 +42,14 @@ async function handler(event) {
     return request;                       // passthrough -> origin 404
   }
   // SITE STOPPED (value flag x). Two causes, one mechanism:
-  //   x = 1  the ORGANIZATION IS PAUSED — trial over, payment missing, or an
-  //          operator's decision (deploy-pkg >= 0.1.60, t_pause_stops_frontends)
-  //   x = 2  the org is fine but PAST ITS MONTHLY REQUEST ALLOWANCE
-  //          (deploy-pkg >= 0.1.61, t_quota_cut_at_edge)
-  //
-  // Answered HERE, at the edge, and that placement is the whole point: the
-  // frontend authorizer never runs for a cache hit or for any path of a
-  // static-mode site, so a gate placed there stops exactly the orgs whose sites
-  // are CHEAPEST for us to keep serving and leaves the expensive ones online.
-  // The monthly cap already had that shape — it cut in the authorizer, which a
-  // fully static site never reaches — so it bit the wrong half of the tenants
-  // until this branch. Before the redirect branch too: a stopped site does not
-  // forward visitors either.
-  //
-  // TWO PAGES, because the two causes have different ways out and telling a
-  // customer over their allowance that their subscription is paused would send
-  // them to a payment page that has nothing to fix. NO APOSTROPHES in either
-  // body: this string is a JS single-quoted literal generated from a TS
-  // template literal, so a plain ' would terminate it and take every tenant
-  // site down with a syntax error (2026-08-29). Typographic U+2019 only.
-  //
-  // 503, not 403: both are temporary — one ends when the org is reactivated,
-  // the other at the start of next month — and 503 is the one status that says
-  // "temporarily unavailable" to a search engine instead of "gone". A no-store
-  // header so neither page survives the recovery.
+  //   x = 1  the ORGANIZATION IS PAUSED (deploy-pkg >= 0.1.60, t_pause_stops_frontends)
+  //   x = 2  the org is PAST ITS MONTHLY REQUEST ALLOWANCE (deploy-pkg >= 0.1.61)
+  // Answered HERE, at the edge: the frontend authorizer never runs for a cache
+  // hit or for any path of a static-mode site, so a gate placed there stops
+  // exactly the orgs whose sites are CHEAPEST to keep serving. Before the
+  // redirect branch too: a stopped site does not forward visitors either.
+  // 503, not 403: both causes are temporary, and 503 tells a search engine
+  // "temporarily unavailable" instead of "gone". Pages in router-stop-pages.ts.
   if (e.x) {
     return {
       statusCode: 503,
@@ -58,8 +60,8 @@ async function handler(event) {
         'retry-after': { value: '3600' }
       },
       body: e.x === 2
-        ? '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Plafond mensuel atteint</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1c1917;background:#faf9f7}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 .5rem;color:#57534e}</style><main><h1>Ce site a atteint son plafond mensuel</h1><p>Son espace a consommé le trafic inclus dans son forfait pour ce mois-ci. Rien ne se perd : le site revient au début du mois prochain, ou dès que son propriétaire augmente son forfait.</p><p lang=en>This site has reached its monthly traffic allowance. Nothing is lost — it returns at the start of next month, or as soon as its owner raises their plan.</p></main>'
-        : '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Site en pause</title><style>body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1c1917;background:#faf9f7}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 .5rem;color:#57534e}</style><main><h1>Ce site est momentanément en pause</h1><p>Son espace est suspendu. Rien ne se perd : le site revient dès que son propriétaire réactive son espace.</p><p lang=en>This site is paused. Nothing is lost — it returns as soon as its owner reactivates their space.</p></main>'
+        ? '${STOP_PAGE_ALLOWANCE}'
+        : '${STOP_PAGE_PAUSED}'
     };
   }
   // CANONICAL REDIRECT (value flag r = target host): the host 301s to the same
@@ -69,16 +71,7 @@ async function handler(event) {
   // the same app and never itself a redirect (no chains).
   if (e.r) {
     var loc = 'https://' + e.r + request.uri;
-    var qs = request.querystring;
-    var parts = [];
-    for (var k in qs) {
-      if (qs[k].multiValue) {
-        for (var j = 0; j < qs[k].multiValue.length; j++) parts.push(k + '=' + qs[k].multiValue[j].value);
-      } else {
-        parts.push(k + '=' + qs[k].value);
-      }
-    }
-    if (parts.length) loc += '?' + parts.join('&');
+    loc += qsOf(request);
     return {
       statusCode: 301,
       statusDescription: 'Moved Permanently',
@@ -89,6 +82,8 @@ async function handler(event) {
     };
   }
   var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
+  // LOGIN REQUIRED (value flags auth + pub) — the branch lives in router-login-gate.ts.
+${LOGIN_GATE_BRANCH}
   // STAGING (value flag e = 's', deploy-pkg >= 0.1.30): this host serves the
   // app's staging deployment — same app, same data, candidate CODE. Its S3
   // folders carry a '--stg' suffix (app names never contain '-', so no
@@ -130,8 +125,7 @@ async function handler(event) {
         // connector writes one KVS route key per such page at deploy time
         // ('r|<org>|<folder>|<path>' -> '1', folder = app or app--stg), so the
         // edge can serve the PAGE's index.html instead of the section's. Miss
-        // (no key, or a pre-route connector) -> the SPA fallback below, byte-
-        // identical to the historical behavior.
+        // (no key, or a pre-route connector) -> the SPA fallback below.
         file = (m === '/' ? '' : m) + '/index.html';      // SPA fallback (section index)
         var norm = uri.length > 1 && uri.charAt(uri.length - 1) === '/' ? uri.slice(0, -1) : uri;
         if (norm !== '/' && norm !== m) {
@@ -146,7 +140,7 @@ async function handler(event) {
       }
       request.uri = '/_appsite/' + e.o + '/' + a + file;
       cf.updateRequestOrigin({
-        "domainName": "${staticAssetsBucket.bucketRegionalDomainName}",
+        "domainName": "${staticBucketDomain}",
         "originAccessControlConfig": {
           "enabled": true,
           "signingBehavior": "always",
@@ -169,7 +163,28 @@ async function handler(event) {
   request.uri = prefix + uri;             // "/o/<org>/<app>/site/e/foo"
   request.headers['x-dilaya-app-host'] = { value: host };  // carry viewer host to origin
   return request;
-}`),
-        });
+}`;
+}
+
+/** What actually ships: the source minus its comment lines. */
+export function routerFunctionCode(staticBucketDomain: string): string {
+  return stripCommentLines(routerFunctionSource(staticBucketDomain));
+}
+
+export function createAppHostRouter(stack: cdk.Stack, ctx: StackContext): void {
+  const { appHostKvs, appLambdaNamePrefix, staticAssetsBucket } = ctx;
+  const code = routerFunctionCode(staticAssetsBucket.bucketRegionalDomainName);
+  // The bucket domain is a CFN token here (resolved at deploy), so the byte
+  // count below is a lower bound; the test suite measures the real thing with
+  // a literal domain. Both must stay under the edge's 10 KB limit.
+  if (Buffer.byteLength(code, "utf8") > CLOUDFRONT_FUNCTION_MAX_BYTES) {
+    throw new Error("apphost router function exceeds the CloudFront 10 KB code limit");
+  }
+  const appHostRouterFn = new cloudfront.Function(stack, "AppHostRouter", {
+    functionName: `${appLambdaNamePrefix}apphost-router`,
+    runtime: cloudfront.FunctionRuntime.JS_2_0,
+    keyValueStore: appHostKvs,
+    code: cloudfront.FunctionCode.fromInline(code),
+  });
   ctx.appHostRouterFn = appHostRouterFn;
 }
