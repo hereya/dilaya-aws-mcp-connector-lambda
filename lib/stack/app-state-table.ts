@@ -105,6 +105,21 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
       "FRONTEND_RATE_BLOCK",
       frontendRateBlock
     );
+    // The long window's three knobs (t_rate_guard_sustained). Same contract:
+    // working defaults in the authorizer, retunable — and switchable to
+    // blocking — by redeploying rather than by editing the handler.
+    frontendAuthorizerRef.addEnvironment(
+      "FRONTEND_RATE_WINDOW_LIMIT",
+      ctx.frontendRateWindowLimit
+    );
+    frontendAuthorizerRef.addEnvironment(
+      "FRONTEND_RATE_WINDOW_MINUTES",
+      ctx.frontendRateWindowMinutes
+    );
+    frontendAuthorizerRef.addEnvironment(
+      "FRONTEND_RATE_WINDOW_BLOCK",
+      ctx.frontendRateWindowBlock
+    );
 
     frontendAuthorizerRef.addToRolePolicy(
       new iam.PolicyStatement({
@@ -115,13 +130,14 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
             // Two row families, both counters: the monthly consumption count
             // and the per-IP-per-minute rate guard. Still nothing else on
             // this table.
-            // Three counter families now: the per-app monthly count, the
-            // per-IP-per-minute rate guard, and the per-ORG monthly count
-            // that the plan's request cap is enforced against. Still nothing
-            // else on this table.
+            // Four counter families now: the per-app monthly count, the
+            // per-IP-per-minute rate guard, its long-window twin, and the
+            // per-ORG monthly count that the plan's request cap is enforced
+            // against. Still nothing else on this table.
             "dynamodb:LeadingKeys": [
               "reqcount#*",
               "ratecount#*",
+              "ratewin#*",
               "reqcountorg#*",
             ],
           },

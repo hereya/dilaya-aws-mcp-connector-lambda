@@ -80,6 +80,16 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   // rather than trusting the release.
   const frontendRateBlock =
     process.env["frontendRateBlock"] === "false" ? "false" : "true";
+  // The LONG window (t_rate_guard_sustained): a second per-IP counter over a
+  // quarter-hour, for the loops that stay under 1 000/minute. Same rule as
+  // above — every default here must AGREE with the authorizer's own, because
+  // the stack always stamps these and an explicit env var wins. Ships in
+  // COUNT mode ("false"): a long window is where a shared address accumulates,
+  // so it reports what it would cut before it is allowed to cut anyone.
+  const frontendRateWindowLimit = process.env["frontendRateWindowLimit"] || "2000";
+  const frontendRateWindowMinutes = process.env["frontendRateWindowMinutes"] || "15";
+  const frontendRateWindowBlock =
+    process.env["frontendRateWindowBlock"] === "true" ? "true" : "false";
   // Domain purchase through Dilaya (Route 53 Domains). OPTIONAL and additive:
   // absent/false → no env, no IAM, feature fully inert connector-side (its
   // tools answer DOMAIN_PURCHASE_NOT_CONFIGURED). Only meaningful together
@@ -129,6 +139,9 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   ctx.frontendForwardHeaders = frontendForwardHeaders;
   ctx.frontendRateBlock = frontendRateBlock;
   ctx.frontendRateLimit = frontendRateLimit;
+  ctx.frontendRateWindowLimit = frontendRateWindowLimit;
+  ctx.frontendRateWindowMinutes = frontendRateWindowMinutes;
+  ctx.frontendRateWindowBlock = frontendRateWindowBlock;
   ctx.handlerName = handlerName;
   ctx.hereyaProjectRootDir = hereyaProjectRootDir;
   ctx.memorySize = memorySize;

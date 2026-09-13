@@ -56,6 +56,9 @@ export interface StackContext {
   appContentOriginSecretPrevious: string | undefined;
   frontendRateLimit: string;
   frontendRateBlock: string;
+  frontendRateWindowLimit: string;
+  frontendRateWindowMinutes: string;
+  frontendRateWindowBlock: string;
   domainPurchase: boolean;
   expectedAudience: string;
   frontendForwardHeaders: string[];
