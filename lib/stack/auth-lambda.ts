@@ -66,12 +66,18 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
   );
 
   // Allow InitiateAuth / RespondToAuthChallenge against any per-app pool
-  // in this account (pool ARNs are created at runtime by enable-auth).
+  // in this account (pool ARNs are created at runtime by enable-auth), plus
+  // the two passkey-registration calls (t_auth_passkey). All four are
+  // token-authorized user-pool APIs (the user's AccessToken / the app client
+  // id carry the authorization), granted here for symmetry with the pair
+  // the OTP flow has always listed — not because IAM gates them.
   authLambdaFn.addToRolePolicy(
     new iam.PolicyStatement({
       actions: [
         "cognito-idp:InitiateAuth",
         "cognito-idp:RespondToAuthChallenge",
+        "cognito-idp:StartWebAuthnRegistration",
+        "cognito-idp:CompleteWebAuthnRegistration",
       ],
       resources: ["*"],
     })
