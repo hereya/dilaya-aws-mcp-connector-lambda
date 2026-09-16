@@ -89,6 +89,20 @@ over 77 s, multipart — all 200. The certificate is passed in (us-east-1), like
 Absent `filesDomain` → nothing is created. The step is appended LAST in the constructor, so the
 golden templates are byte-identical with the feature off.
 
+**The human transfer page** (`/_transfer`, t_dad9f0e09ffb, 0.1.76). The same distribution carries one more
+behavior, `/_transfer*` (GET/HEAD, uncached), whose viewer-request CloudFront Function answers a
+self-contained page itself — the bucket is never asked for that path, and no object key can collide
+(every key starts with the storage prefix). When a sandbox blocks the connector's programmatic
+transfer, the connector hands a person `https://<filesDomain>/_transfer#<payload>`: they upload
+(presigned **POST** to `/` — the policy enforces key, size range, Content-Type and a transfer id) or
+download (presigned GET as attachment) from their own browser, on the SAME origin as the presigned
+URLs, so no CORS and no Lambda in the byte path. The payload lives in the fragment, which never
+reaches a server. The page's script and style are pinned by hash in its CSP; a download target that
+is not a same-origin path is refused. Source: `lib/stack/files-transfer/` (the payload contract is
+shared with the connector's `src/storage/transfer-link.ts`); `test/files-domain/transfer-page.test.ts`
+executes the synthesised function. Proven 16/09 from headless Chrome against the live distribution
+before shipping: upload 201, over-size 400 EntityTooLarge, 200 MB in 39 s, download 200 attachment.
+
 ## `hereyaProjectEnv` contract
 
 - `iamPolicy*` keys → attached to the Lambda role as IAM policies.
