@@ -6,6 +6,8 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { StackContext } from "./context";
+import { CLOUDFRONT_FUNCTION_MAX_BYTES } from "./app-content/router-stop-pages";
+import { TRANSFER_PATH, transferFunctionCode } from "./files-transfer/page";
 
 /**
  * Presigned file URLs on a Dilaya host (t_files_own_domain, 2026-09-12).
@@ -53,6 +55,8 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
   }
 
   const bucket = s3.Bucket.fromBucketName(stack, "FilesBucket", bucketName);
+  const origin = origins.S3BucketOrigin.withBucketDefaults(bucket);
+  const transferFn = createTransferPageFunction(stack);
   const distribution = new cloudfront.Distribution(stack, "FilesDistribution", {
     comment: "Presigned file URLs on a Dilaya host (pass-through to S3)",
     certificate: acm.Certificate.fromCertificateArn(
@@ -62,12 +66,27 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
     ),
     domainNames: [filesDomain],
     defaultBehavior: {
-      origin: origins.S3BucketOrigin.withBucketDefaults(bucket),
+      origin,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
       cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
       originRequestPolicy:
         cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+    },
+    // The human transfer page (t_dad9f0e09ffb) on the SAME host as the
+    // presigned URLs. Its function answers every request itself, so the bucket
+    // is never asked for this path (the origin is only required by the API).
+    // No object key can collide: every key starts with the storage prefix.
+    additionalBehaviors: {
+      [`${TRANSFER_PATH}*`]: {
+        origin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        functionAssociations: [
+          { function: transferFn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
+      },
     },
   });
 
@@ -84,5 +103,17 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
   ctx.fn.addEnvironment("FILES_PUBLIC_HOST", filesDomain);
   new cdk.CfnOutput(stack, "FilesDistributionDomain", {
     value: distribution.distributionDomainName,
+  });
+}
+
+function createTransferPageFunction(stack: cdk.Stack): cloudfront.Function {
+  const code = transferFunctionCode();
+  if (Buffer.byteLength(code, "utf8") > CLOUDFRONT_FUNCTION_MAX_BYTES) {
+    throw new Error("files transfer page function exceeds the CloudFront 10 KB code limit");
+  }
+  return new cloudfront.Function(stack, "FilesTransferPage", {
+    comment: "Human upload/download fallback page (bytes go straight to S3)",
+    runtime: cloudfront.FunctionRuntime.JS_2_0,
+    code: cloudfront.FunctionCode.fromInline(code),
   });
 }
