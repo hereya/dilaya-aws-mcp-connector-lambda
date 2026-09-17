@@ -69,6 +69,35 @@ export function createAccessLogFilters(stack: cdk.Stack, ctx: StackContext): voi
     }
   );
 
+  // --- …and a third party's (t_gw_upstream_5xx) ---------------------------
+  // Same alarm, same false verdict, twice: 2026-09-03 two slow Pilote
+  // freebusy answers on the outbound MCP gateway, 2026-09-09 a target's OAuth
+  // server failing discovery on the consent page. Both times the connector
+  // worked and SAID so — it answered 502/504 on purpose — and the page read
+  // "platform down". Those two routes answer 502/504 only for a third party
+  // (the connector pins it: `gatewayFailureStatus`, a bug of ours stays 500).
+  // `integrationErrorMessage = "-"` keeps a gateway-made 502 (malformed
+  // Lambda response, which ALSO carries int=200) on our side of the line.
+  // Verified with `aws logs test-metric-filter` on 8 shapes: exactly the three
+  // upstream ones match.
+  const httpApi5xxUpstreamFilter = new logs.MetricFilter(
+    stack,
+    "HttpApi5xxUpstreamFilter",
+    {
+      logGroup: accessLogGroup,
+      metricNamespace: "Dilaya/Connector",
+      metricName: "HttpApi5xxUpstream",
+      filterPattern: logs.FilterPattern.literal(
+        '{ ($.status = "502" || $.status = "504") && $.integrationStatus = "200" && ' +
+          '$.integrationErrorMessage = "-" && ($.routeKey = "ANY /o/{orgId}/{app}/mcp/{proxy+}" || ' +
+          '$.routeKey = "ANY /mcp-connections/{proxy+}") }'
+      ),
+      metricValue: "1",
+      defaultValue: 0,
+    }
+  );
+
   ctx.httpApi5xxAllFilter = httpApi5xxAllFilter;
   ctx.httpApi5xxTenantAppFilter = httpApi5xxTenantAppFilter;
+  ctx.httpApi5xxUpstreamFilter = httpApi5xxUpstreamFilter;
 }

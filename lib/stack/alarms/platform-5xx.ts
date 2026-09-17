@@ -3,7 +3,7 @@ import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import type { StackContext } from "../context";
 
 export function createPlatform5xxAlarm(stack: cdk.Stack, ctx: StackContext): void {
-  const { alertOn, httpApi5xxAllFilter, httpApi5xxTenantAppFilter } = ctx;
+  const { alertOn, httpApi5xxAllFilter, httpApi5xxTenantAppFilter, httpApi5xxUpstreamFilter } = ctx;
   // The gateway layer, which `AWS/Lambda Errors` structurally cannot see: a
   // 502 malformed response, a refused integration or a 504 integration
   // timeout never makes the Lambda throw. That blind spot is what hid 20 5xx
@@ -14,16 +14,24 @@ export function createPlatform5xxAlarm(stack: cdk.Stack, ctx: StackContext): voi
   // its integration still counts as ours — `int != 200` means the gateway
   // could not get a normal answer, and that is a platform question until
   // proven otherwise.
+  //
+  // Also subtracted: a 502/504 the connector CHOSE because a third party
+  // failed (outbound MCP gateway, consent page — see HttpApi5xxUpstream). Not
+  // alarmed either: the org is already told by its own incident fiche.
   alertOn(
     new cloudwatch.Alarm(stack, "HttpApiPlatform5xxAlarm", {
       metric: new cloudwatch.MathExpression({
-        expression: "total - tenantApp",
+        expression: "total - tenantApp - upstream",
         usingMetrics: {
           total: httpApi5xxAllFilter.metric({
             period: cdk.Duration.minutes(5),
             statistic: "Sum",
           }),
           tenantApp: httpApi5xxTenantAppFilter.metric({
+            period: cdk.Duration.minutes(5),
+            statistic: "Sum",
+          }),
+          upstream: httpApi5xxUpstreamFilter.metric({
             period: cdk.Duration.minutes(5),
             statistic: "Sum",
           }),
@@ -38,7 +46,9 @@ export function createPlatform5xxAlarm(stack: cdk.Stack, ctx: StackContext): voi
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription:
         "Dilaya connector: platform-origin API Gateway 5xx >= 1 in 5 min (a tenant app answering " +
-        "500 on its own /site route is excluded — see HttpApi5xxTenantApp). Read the " +
+        "500 on its own /site route is excluded — see HttpApi5xxTenantApp; so is a 502/504 the " +
+        "connector returned for a failing third party on the MCP gateway or consent page — see " +
+        "HttpApi5xxUpstream). Read the " +
         "HttpApiAccessLogs group: integrationStatus '-' means the request never reached the " +
         "integration (authorizer or gateway refusal); a populated integrationErrorMessage is what " +
         "separates a 502 from a 504; integrationStatus 200 on a platform route means our own " +
