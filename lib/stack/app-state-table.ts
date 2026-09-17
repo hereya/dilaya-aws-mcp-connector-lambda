@@ -59,7 +59,9 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
   fn.addEnvironment("ACCESS_LOG_GROUP", accessLogGroup.logGroupName);
   fn.addToRolePolicy(
     new iam.PolicyStatement({
-      actions: ["logs:StartQuery", "logs:StopQuery"],
+      // FilterLogEvents (17/09, t_incident_recovery_lag): the app-5xx analyser
+      // reads freshly INGESTED lines, which Insights only indexes minutes later.
+      actions: ["logs:StartQuery", "logs:StopQuery", "logs:FilterLogEvents"],
       resources: [accessLogGroup.logGroupArn, `${accessLogGroup.logGroupArn}:*`],
     })
   );

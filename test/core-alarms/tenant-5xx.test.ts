@@ -45,6 +45,10 @@ describe("connector core alarms", () => {
     expect(start).toBeDefined();
     expect(JSON.stringify(start.Resource)).toContain("HttpApiAccessLogs");
     expect(JSON.stringify(start.Action)).not.toContain("logs:PutLogEvents");
+    // 17/09 (t_incident_recovery_lag): the app-5xx analyser reads INGESTED lines
+    // with FilterLogEvents — Insights indexes them minutes later, and the fiche
+    // was lost twice. Scoped to the same group, never "*".
+    expect(start.Action).toContain("logs:FilterLogEvents");
     const results = statements.find((st) => JSON.stringify(st.Action).includes("logs:GetQueryResults"));
     expect(results).toBeDefined();
     expect(results.Action).toEqual("logs:GetQueryResults");
