@@ -100,6 +100,7 @@ export interface StackContext {
   cfnDefaultStage: apigwv2.CfnStage;
   httpApi5xxAllFilter: logs.MetricFilter;
   httpApi5xxTenantAppFilter: logs.MetricFilter;
+  httpApi5xxUpstreamFilter: logs.MetricFilter;
   prmLambda: lambda.Function;
   lambdaIntegration: integrations.HttpLambdaIntegration;
   frontendAuthorizerId: string | undefined;

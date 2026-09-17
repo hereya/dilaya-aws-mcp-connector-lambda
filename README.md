@@ -243,7 +243,7 @@ possible; only the *speaking* depends on the two inputs above.
 | Alarm | Threshold | The blind spot it covers |
 |---|---|---|
 | `Errors` + `Throttles`, per Lambda (5 functions → 10 alarms) | ≥ 1 / 5 min | the layer that throws |
-| `HttpApiPlatform5xx` (metric math: `HttpApi5xx - HttpApi5xxTenantApp`) | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
+| `HttpApiPlatform5xx` (metric math: `HttpApi5xx - HttpApi5xxTenantApp - HttpApi5xxUpstream`) | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
 | `AppStateTable` `SystemErrors` + `ThrottledRequests` | ≥ 1 / 5 min | a throttled state write is neither a Lambda error nor a gateway error |
 
 Thresholds are calibrated on the **measured** baseline, not guessed: Lambda `Errors`/`Throttles` have
@@ -260,12 +260,13 @@ routes as a platform incident. That is not theory: over 30 days and 26 alarms, t
 firing was this alarm, 4× on 2026-08-14, on 10 requests that all carried `int=200` on
 `…/komlaba/site-stg/…` — a client's pre-production site returning 500 on two of its own routes.
 
-Two metric filters over the access log answer "whose?", and the alarm is their difference:
+Three metric filters over the access log answer "whose?", and the alarm is the first minus the other two:
 
 | Metric (`Dilaya/Connector`) | Filter pattern | Meaning |
 |---|---|---|
 | `HttpApi5xx` | `{ $.status = "5*" }` | every 5xx the gateway served |
 | `HttpApi5xxTenantApp` | `{ $.status = "5*" && $.integrationStatus = "200" && $.routeKey = "*/site*" }` | the tenant's own app answered 500 |
+| `HttpApi5xxUpstream` | `{ ($.status = "502" \|\| $.status = "504") && $.integrationStatus = "200" && $.integrationErrorMessage = "-" && ($.routeKey = "ANY /o/{orgId}/{app}/mcp/{proxy+}" \|\| $.routeKey = "ANY /mcp-connections/{proxy+}") }` | the connector answered 502/504 on purpose because a THIRD PARTY failed (outbound MCP gateway, OAuth consent page) |
 
 Both signals are required. `integrationStatus = 200` alone would also swallow **our** handler's own
 500s (they answer normally too) — trading a noisy alarm for a blind one; the `…/site…` route keys are
@@ -275,6 +276,16 @@ leaves an alarm that looks healthy and never fires. Both filters carry `DefaultV
 which a period with no tenant 5xx has no datapoint and the subtraction is *dropped* rather than
 evaluated. The two filters read the **same** log events on purpose: pairing one with the gateway's
 own metric would let ingestion skew invent a difference across a period boundary.
+
+**A third party's failure is not ours either** (t_gw_upstream_5xx, 0.1.77). On 2026-09-03 two slow
+Pilote freebusy answers through the outbound MCP gateway, and on 2026-09-09 a target's OAuth server
+failing discovery on the consent page, both fired this alarm while the connector worked and said so.
+On those two routes the connector answers 502 (upstream error) / 504 (upstream timeout) ONLY for a
+third party — its `gatewayFailureStatus` keeps its own bugs at 500, which stay counted.
+`integrationErrorMessage = "-"` keeps a gateway-made 502 (a malformed Lambda response, which also
+carries `int=200`) on our side. The pattern was run through `aws logs test-metric-filter` on 8
+shapes plus the real 17/09 and 09/09 lines. The org is told by its own incident fiche, so this
+metric is not alarmed.
 
 A tenant integration that times out or is refused (`int != 200`) still counts as ours — the gateway
 could not get a normal answer, and that is a platform question until proven otherwise. Alerting the

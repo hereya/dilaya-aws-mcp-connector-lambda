@@ -20,7 +20,7 @@ describe("connector core alarms", () => {
   test("the gateway alarm counts only the 5xx that are ours", () => {
     const alarm = mathAlarms(template(WIRED))[0] as any;
     const expression = alarm.Properties.Metrics.find((m: any) => m.Expression);
-    expect(expression.Expression).toBe("total - tenantApp");
+    expect(expression.Expression).toBe("total - tenantApp - upstream");
     expect(alarm.Properties.Threshold).toBe(1);
   });
 
@@ -39,6 +39,22 @@ describe("connector core alarms", () => {
     );
   });
 
+  // --- …and a third party's (t_gw_upstream_5xx) ---------------------------
+  // 2026-09-03 (slow Pilote freebusy through the MCP gateway) and 2026-09-09
+  // (a target's OAuth server failing on the consent page): the connector
+  // answered 502/504 ON PURPOSE and the platform alarm read it as ours. The
+  // pattern was run through `aws logs test-metric-filter` on 8 shapes and
+  // matched exactly the 3 upstream ones. What it must NOT take: a 500 on those
+  // routes (our bug), a 502 the GATEWAY made (integrationErrorMessage set,
+  // int=200 too), a 504 integration timeout (int "-"), any other route.
+  test("a 502/504 the connector chose for a failing third party is not ours — and nothing else is excluded", () => {
+    expect(metricFilterFor(template(WIRED), "HttpApi5xxUpstream").FilterPattern).toBe(
+      '{ ($.status = "502" || $.status = "504") && $.integrationStatus = "200" && ' +
+        '$.integrationErrorMessage = "-" && ($.routeKey = "ANY /o/{orgId}/{app}/mcp/{proxy+}" || ' +
+        '$.routeKey = "ANY /mcp-connections/{proxy+}") }'
+    );
+  });
+
   // Access-log values are JSON strings, so these are wildcard string matches.
   // A numeric comparison (`$.status >= 500`) reads as a type mismatch and
   // matches nothing — a permanently silent alarm that looks perfectly healthy.
@@ -54,9 +70,9 @@ describe("connector core alarms", () => {
   // `total - tenantApp` is then dropped for that period instead of evaluating
   // — silently disarming the alarm in the exact case it exists for: a platform
   // 5xx during a period with no tenant 5xx.
-  test("both 5xx filters emit 0 when they do not match, so the subtraction always evaluates", () => {
+  test("every 5xx filter emits 0 when they do not match, so the subtraction always evaluates", () => {
     const t = template(WIRED);
-    for (const name of ["HttpApi5xx", "HttpApi5xxTenantApp"]) {
+    for (const name of ["HttpApi5xx", "HttpApi5xxTenantApp", "HttpApi5xxUpstream"]) {
       expect(
         metricFilterFor(t, name).MetricTransformations[0].DefaultValue
       ).toBe(0);
