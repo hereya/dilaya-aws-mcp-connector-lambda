@@ -12,7 +12,8 @@ export const RUNNER_TIMEOUT_SECONDS = 900;
 // Cloud-agent RUNNER: the connector's SAME bundle under a second entry point
 // (`handler.runnerHandler`). One invocation = one run of one cloud agent, which
 // outlives the ~30 s an API Gateway request gets. It has NO route and NO event
-// source: it is invoked asynchronously by the connector, by IAM only.
+// source: it is invoked asynchronously, by IAM only — by the connector (a
+// backend's `agent.run`) and by EventBridge Scheduler (the agent's schedule).
 //
 // Same ROLE as the connector on purpose — it reads the same agent item, the
 // same SSM token path, and the AgentCore grants arrive on that role from the
@@ -20,7 +21,7 @@ export const RUNNER_TIMEOUT_SECONDS = 900;
 // what a run reads, and no secret (it never calls resolveSecrets).
 // -----------------------------------------------------------------------
 export function createCloudAgentRunner(stack: cdk.Stack, ctx: StackContext): void {
-  const { appStateTable, fn, handlerName, hereyaProjectRootDir, oauthServerUrl, plainEnv } = ctx;
+  const { appCronInvokeRole, appStateTable, fn, handlerName, hereyaProjectRootDir, oauthServerUrl, plainEnv } = ctx;
 
   const runner = new lambda.Function(stack, "CloudAgentRunner", {
     runtime: lambda.Runtime.NODEJS_22_X,
@@ -50,5 +51,11 @@ export function createCloudAgentRunner(stack: cdk.Stack, ctx: StackContext): voi
     roles: [fn.role!],
     statements: [new iam.PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [runner.functionArn] })],
   });
+  // A cloud agent's SCHEDULE is an EventBridge schedule in the app-crons group
+  // whose target is the runner itself (connector: cloud-agent/schedule.ts). The
+  // role Scheduler assumes could only invoke per-app Lambdas until now.
+  appCronInvokeRole.addToPolicy(
+    new iam.PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [runner.functionArn] })
+  );
   ctx.monitoredFunctions.push({ label: "CloudAgentRunner", fn: runner });
 }

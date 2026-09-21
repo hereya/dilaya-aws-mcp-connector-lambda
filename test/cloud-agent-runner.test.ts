@@ -91,6 +91,22 @@ describe("cloud-agent runner Lambda", () => {
     });
   });
 
+  it("the Scheduler role may invoke it — an agent's schedule targets the runner itself", () => {
+    const t = template();
+    const id = runnerId(t)[0];
+    const roles = t.findResources("AWS::IAM::Role", {
+      Properties: { AssumeRolePolicyDocument: { Statement: [Match.objectLike({ Principal: { Service: "scheduler.amazonaws.com" } })] } },
+    });
+    const [roleId] = Object.keys(roles);
+    expect(Object.keys(roles)).toHaveLength(1);
+    const granted = (Object.values(t.findResources("AWS::IAM::Policy")) as any[])
+      .filter((pol) => JSON.stringify(pol.Properties.Roles) === JSON.stringify([{ Ref: roleId }]))
+      .flatMap((pol) => pol.Properties.PolicyDocument.Statement);
+    expect(granted).toContainEqual({ Action: "lambda:InvokeFunction", Effect: "Allow", Resource: { "Fn::GetAtt": [id, "Arn"] } });
+    // …and still nothing but Lambda invocations.
+    for (const st of granted) expect(st.Action).toBe("lambda:InvokeFunction");
+  });
+
   it("has no route and no public permission", () => {
     const t = template();
     const id = runnerId(t)[0];
