@@ -35,7 +35,6 @@ export function createAppCrons(stack: cdk.Stack, ctx: StackContext): void {
       resources: [appLambdaArnPattern],
     })
   );
-  ctx.appCronInvokeRole = appCronInvokeRole;
   fn.addEnvironment("APP_CRON_GROUP_NAME", appCronGroup.name!);
   fn.addEnvironment("APP_CRON_INVOKE_ROLE_ARN", appCronInvokeRole.roleArn);
   // Connector manages schedules ONLY inside its own group; the pass-role is
