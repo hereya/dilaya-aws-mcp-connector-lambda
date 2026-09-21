@@ -91,6 +91,8 @@ export interface StackContext {
   appLambdaArnPattern: string;
   runtimeLayer: lambda.LayerVersion | undefined;
   triggerArns: string[];
+  /** Same four, same order, as bare function NAMES — what the connector env carries. */
+  triggerNames: string[];
   appStateTable: dynamodb.Table;
 
   // --- HTTP API ---
