@@ -22,6 +22,7 @@ describe("cloud-agent runner Lambda", () => {
     process.env.hereyaProjectEnv = JSON.stringify({
       agentcoreExecutionRoleArn: "arn:aws:iam::123456789012:role/harness-exec",
       agentcoreHarnessTag: "dilaya:cloud-agent=1",
+      capabilitySecretArn: "secret://hmac-key",
     });
     delete process.env.customDomain;
     delete process.env.organizationId;
@@ -59,6 +60,16 @@ describe("cloud-agent runner Lambda", () => {
         }),
       },
     });
+  });
+
+  it("can sign Data API calls: it holds the capability secret's NAME, never its value", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      Handler: "handler.runnerHandler",
+      Environment: { Variables: Match.objectLike({ capabilitySecretArn: "/TestStack/capabilitySecretArn" }) },
+    });
+    const runner = t.findResources("AWS::Lambda::Function")[runnerId(t)[0]] as any;
+    expect(JSON.stringify(runner.Properties.Environment)).not.toContain("hmac-key");
   });
 
   it("shares the connector's role — the AgentCore grants land there", () => {

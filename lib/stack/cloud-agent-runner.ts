@@ -21,7 +21,7 @@ export const RUNNER_TIMEOUT_SECONDS = 900;
 // what a run reads, and no secret (it never calls resolveSecrets).
 // -----------------------------------------------------------------------
 export function createCloudAgentRunner(stack: cdk.Stack, ctx: StackContext): void {
-  const { appCronInvokeRole, appStateTable, fn, handlerName, hereyaProjectRootDir, oauthServerUrl, plainEnv } = ctx;
+  const { appCronInvokeRole, appStateTable, capSecretName, fn, handlerName, hereyaProjectRootDir, oauthServerUrl, plainEnv } = ctx;
 
   const runner = new lambda.Function(stack, "CloudAgentRunner", {
     runtime: lambda.Runtime.NODEJS_22_X,
@@ -39,6 +39,11 @@ export function createCloudAgentRunner(stack: cdk.Stack, ctx: StackContext): voi
       APP_STATE_TABLE: appStateTable.tableName,
       // Where the agent's token is refreshed — the AS this deployment authenticates against.
       OAUTH_SERVER_URL: oauthServerUrl,
+      // A run's RESULT is a row in the app's own database, and the Data API VM
+      // refuses any call without a capability token. The runner never runs the
+      // connector's startup resolver, so it gets the secret's NAME: capability.ts
+      // fetches a reference live (the shared role can already read it).
+      ...(capSecretName ? { capabilitySecretArn: capSecretName } : {}),
     },
   });
 
