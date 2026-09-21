@@ -5,7 +5,7 @@ import * as crypto from "crypto";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const https = require("https");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { handler, authorizeClaims } = require("../lib/authorizer");
+const { handler, authorizeClaims, STALE_AFTER_SEC } = require("../lib/authorizer");
 
 const ISS = "https://dilaya.eu/oauth/connect";
 const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -62,9 +62,10 @@ test.each([
   ["expired", () => sign({ ...good(), exp: nowSec() - 90 })],
   ["issuer_mismatch", () => sign({ ...good(), iss: "https://dilaya.eu" })],
   ["no_org_ids", () => sign({ ...good(), org_ids: [] })],
-])("refusal %s is named, and the answer to the gateway stays bare", async (reason, make) => {
+])("refusal %s is named, and the gateway only learns it is FRESH", async (reason, make) => {
   const r = await run(make());
-  expect(r).toEqual({ isAuthorized: false }); // no `reason` leaks into the gateway response
+  // no `reason` leaks into the gateway response — one word, for the access log
+  expect(r).toEqual({ isAuthorized: false, context: { refusal: "fresh" } });
   expect(lines).toHaveLength(1);
   expect(lines[0]).toMatchObject({ type: "mcp_authorizer_refused", reason, routeKey: "POST /mcp", ua: "Claude-User" });
 });
@@ -78,6 +79,28 @@ test("who was refused is written ONLY once the signature held — and never the 
   expect(lines[0]).toMatchObject({ sub: "u1", clientId: "c1" });
   expect(lines[0].expiredForSec).toBeGreaterThanOrEqual(90);
   expect(JSON.stringify(lines[0])).not.toContain(expired.split(".")[2]);
+});
+
+// t_mcp403_stale_retry_noise — 21/09, 16:05-17:16Z: 3 clients cut off that
+// morning retried hourly with tokens dead for 14 304-17 964 s, and rang the
+// alarm twice on no new breakage. The incident itself (tokens dead for minutes)
+// must keep ringing.
+test.each([
+  [90, "fresh"],
+  [STALE_AFTER_SEC - 60, "fresh"],
+  [STALE_AFTER_SEC + 60, "stale"],
+  [14304, "stale"],
+  [17964, "stale"],
+])("a token expired for %i s is a %s refusal", async (ago, refusal) => {
+  const r = await run(sign({ ...good(), exp: nowSec() - ago }));
+  expect(r).toEqual({ isAuthorized: false, context: { refusal } });
+  expect(lines[0]).toMatchObject({ reason: "expired", refusal });
+});
+
+test("only `expired` can be stale — an old token refused for another reason is fresh", async () => {
+  const r = await run(sign({ ...good(), exp: nowSec() - 17964 }, stranger));
+  expect(r.context).toEqual({ refusal: "fresh" });
+  expect(lines[0].reason).toBe("bad_signature");
 });
 
 test("authorizeClaims names the audience refusal too", () => {
