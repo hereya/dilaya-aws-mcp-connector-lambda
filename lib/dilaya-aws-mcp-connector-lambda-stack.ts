@@ -46,6 +46,7 @@ import { createTrafficAlarms } from "./stack/alarms/traffic";
 import { createRateGuardAlarm } from "./stack/alarms/rate-guard";
 import { createRequestCapAlarm } from "./stack/alarms/request-cap";
 import { createPlatform5xxAlarm } from "./stack/alarms/platform-5xx";
+import { createMcpRefusalsAlarm } from "./stack/alarms/mcp-refusals";
 import { createAppStateAlarms } from "./stack/alarms/dynamodb";
 import { createFilesDomain } from "./stack/files-domain";
 
@@ -165,6 +166,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     createRateGuardAlarm(this, ctx);
     createRequestCapAlarm(this, ctx);
     createPlatform5xxAlarm(this, ctx);
+    createMcpRefusalsAlarm(this, ctx);
     createAppStateAlarms(this, ctx);
 
     // Last on purpose: it only adds resources and one env var, so appending it

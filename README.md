@@ -245,6 +245,7 @@ possible; only the *speaking* depends on the two inputs above.
 | `Errors` + `Throttles`, per Lambda (5 functions → 10 alarms) | ≥ 1 / 5 min | the layer that throws |
 | `HttpApiPlatform5xx` (metric math: `HttpApi5xx - HttpApi5xxTenantApp - HttpApi5xxUpstream`) | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
 | `AppStateTable` `SystemErrors` + `ThrottledRequests` | ≥ 1 / 5 min | a throttled state write is neither a Lambda error nor a gateway error |
+| `McpRefusals` (`Mcp403`: access-log `403` on path `/mcp`) | ≥ 5 / 15 min | a **refusal** is not an error, a 5xx or a throttle: on 2026-09-21 `/mcp` answered 403 to almost everyone for ~2 h (188 refusals) and nothing rang. Baseline over the 7 days before: **zero**. Counted on the access log because the gateway caches a refusal 5 min — the authorizer does not even run. WHY each one was refused: `mcp_authorizer_refused` lines (`reason`) in the McpAuthorizer log group — never the token, claims only once the signature held |
 
 Thresholds are calibrated on the **measured** baseline, not guessed: Lambda `Errors`/`Throttles` have
 been flat 0 since 2026-08-03, and gateway `5xx` 0 since 2026-08-05 21:03Z with the landing API as a
