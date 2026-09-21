@@ -27,13 +27,32 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
   // 2 h 30 before anyone noticed. No ratio term on purpose: at 2 requests in
   // a window a share of 200s means nothing, and the count alone had no false
   // positive in a week.
+  //
+  // FRESH only (t_mcp403_stale_retry_noise). The same evening the alarm rang
+  // at 16:08Z and 17:17Z on NO new breakage: 3 clients cut off that morning
+  // whose Claude retries every hour, 2 requests each, with a token dead for
+  // 4-5 h — 3 x 2 = 6 >= 5, every hour until they reconnect. The authorizer
+  // now hands the access log one word, `refusal`: `stale` = `expired` for 2 h+.
+  // The filter excludes `stale` rather than requiring `fresh`, so a refusal
+  // the authorizer never labelled ("-") still rings: it fails LOUD.
   const mcp403Filter = new logs.MetricFilter(stack, "Mcp403Filter", {
     logGroup: accessLogGroup,
     metricNamespace: "Dilaya/Connector",
     metricName: "Mcp403",
     // `path`, not `routeKey`: the route is `POST /mcp` today, and a refusal
     // must keep counting if it ever moves under a proxy route.
-    filterPattern: logs.FilterPattern.literal('{ $.status = "403" && $.path = "/mcp" }'),
+    filterPattern: logs.FilterPattern.literal('{ $.status = "403" && $.path = "/mcp" && $.refusal != "stale" }'),
+    metricValue: "1",
+    defaultValue: 0,
+  });
+
+  // The stale retries, counted apart and WITHOUT an alarm: read at the sweep,
+  // it says how many cut-off clients still have to reconnect.
+  new logs.MetricFilter(stack, "Mcp403StaleFilter", {
+    logGroup: accessLogGroup,
+    metricNamespace: "Dilaya/Connector",
+    metricName: "Mcp403Stale",
+    filterPattern: logs.FilterPattern.literal('{ $.status = "403" && $.path = "/mcp" && $.refusal = "stale" }'),
     metricValue: "1",
     defaultValue: 0,
   });
@@ -55,7 +74,9 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
         "its `connect_token_refused` lines) or of this authorizer. WHY each one was refused: the " +
         "McpAuthorizer log group, lines `mcp_authorizer_refused` (`reason`: expired, bad_signature, " +
         "issuer_mismatch, no_org_ids, audience_mismatch, jwks_unavailable…). A killed refresh chain " +
-        "does NOT heal alone: those users must reconnect Dilaya in their client.",
+        "does NOT heal alone: those users must reconnect Dilaya in their client. Hourly retries on a " +
+        "token dead for 2 h+ are NOT counted here (metric `Mcp403Stale`): once a breakage is 2 h old " +
+        "this alarm goes quiet on its own — quiet is not repaired.",
     })
   );
 }

@@ -60,6 +60,9 @@ export function createHttpApi(stack: cdk.Stack, ctx: StackContext): void {
       responseLatency: "$context.responseLatency",
       errorMessage: "$context.error.message",
       authorizerError: "$context.authorizer.error",
+      // `fresh` | `stale`, set by the /mcp authorizer on a refusal ("-" otherwise):
+      // the Mcp403 alarm counts everything that is not `stale`.
+      refusal: "$context.authorizer.refusal",
       sourceIp: "$context.identity.sourceIp",
       userAgent: "$context.identity.userAgent",
     }),

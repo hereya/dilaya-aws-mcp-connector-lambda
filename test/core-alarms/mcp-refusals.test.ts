@@ -13,8 +13,23 @@ describe("refusals on /mcp ring", () => {
   // a retrying client is refused without the authorizer running at all.
   test("the 403s are counted on the access log, as strings, by path", () => {
     const f = metricFilterFor(template(WIRED), "Mcp403");
-    expect(f.FilterPattern).toBe('{ $.status = "403" && $.path = "/mcp" }');
+    // Excludes `stale` instead of requiring `fresh`: an unlabelled refusal ("-") rings.
+    expect(f.FilterPattern).toBe('{ $.status = "403" && $.path = "/mcp" && $.refusal != "stale" }');
     expect(f.MetricTransformations[0].DefaultValue).toBe(0);
+  });
+
+  // t_mcp403_stale_retry_noise: hourly retries on a token dead for 2 h+ rang
+  // the alarm twice (16:08Z, 17:17Z) on no new breakage.
+  test("stale retries are counted apart, and nothing rings on them", () => {
+    const f = metricFilterFor(template(WIRED), "Mcp403Stale");
+    expect(f.FilterPattern).toBe('{ $.status = "403" && $.path = "/mcp" && $.refusal = "stale" }');
+    expect(alarmsBy(template(WIRED), "Mcp403Stale")).toHaveLength(0);
+  });
+
+  test("the access log carries the authorizer's one word", () => {
+    const stages = template(WIRED).findResources("AWS::ApiGatewayV2::Stage");
+    const formats = Object.values(stages).map((s: any) => s.Properties.AccessLogSettings?.Format ?? "");
+    expect(formats.some((f: string) => JSON.parse(f).refusal === "$context.authorizer.refusal")).toBe(true);
   });
 
   test("5 refusals in 15 min ring, and the alarm is wired to the relay", () => {
