@@ -85,9 +85,6 @@ export interface StackContext {
   /** Every function that gets an Errors/Throttles alarm at the end of the stack. */
   monitoredFunctions: { label: string; fn: lambda.Function }[];
 
-  /** Assumed by EventBridge Scheduler: invokes per-app Lambdas (app crons) and the cloud-agent runner. */
-  appCronInvokeRole: iam.Role;
-
   // --- per-app Lambda plumbing ---
   appLambdaBoundary: iam.ManagedPolicy;
   appRolePath: string;

@@ -24,7 +24,6 @@ import { grantAppLambdaManagement } from "./stack/app-lambda-iam";
 import { grantConnectorSsm } from "./stack/connector-ssm";
 import { setConnectorEnv } from "./stack/connector-env";
 import { createAppStateTable } from "./stack/app-state-table";
-import { createCloudAgentRunner } from "./stack/cloud-agent-runner";
 import { grantCognitoProvisioning } from "./stack/cognito-provisioning-iam";
 import { createCustomDomainDns } from "./stack/custom-domain-dns";
 import { resolveAppContentDomain } from "./stack/app-content/domain";
@@ -111,7 +110,6 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     grantConnectorSsm(this, ctx);
     setConnectorEnv(this, ctx);
     createAppStateTable(this, ctx);
-    createCloudAgentRunner(this, ctx);
     grantCognitoProvisioning(this, ctx);
 
     // -----------------------------------------------------------------------
