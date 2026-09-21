@@ -83,4 +83,7 @@ export function createAppAuthTriggers(stack: cdk.Stack, ctx: StackContext): void
   ];
 
   ctx.triggerArns = triggerArns;
+  ctx.triggerNames = [preSignUpFn, defineChallengeFn, createChallengeFn, verifyChallengeFn].map(
+    (f) => f.functionName
+  );
 }
