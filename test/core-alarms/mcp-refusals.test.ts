@@ -11,19 +11,21 @@ describe("refusals on /mcp ring", () => {
 
   // The count lives on the ACCESS LOG: the gateway caches a refusal 5 min, so
   // a retrying client is refused without the authorizer running at all.
-  test("the 403s are counted on the access log, as strings, by path", () => {
-    const f = metricFilterFor(template(WIRED), "Mcp403");
-    // Excludes `stale` instead of requiring `fresh`: an unlabelled refusal ("-") rings.
-    expect(f.FilterPattern).toBe('{ $.status = "403" && $.path = "/mcp" && $.refusal != "stale" }');
+  // 401 since 0.1.87 (t_expired_token_403_stuck): the connector answers the
+  // refusal, with WWW-Authenticate. `fresh` is REQUIRED: the gateway's own
+  // 401 (no Authorization header — scanners) has no refusal word and no holder.
+  test("the fresh 401s are counted on the access log, as strings, by path", () => {
+    const f = metricFilterFor(template(WIRED), "McpRefused");
+    expect(f.FilterPattern).toBe('{ $.status = "401" && $.path = "/mcp" && $.refusal = "fresh" }');
     expect(f.MetricTransformations[0].DefaultValue).toBe(0);
   });
 
   // t_mcp403_stale_retry_noise: hourly retries on a token dead for 2 h+ rang
   // the alarm twice (16:08Z, 17:17Z) on no new breakage.
   test("stale retries are counted apart, and nothing rings on them", () => {
-    const f = metricFilterFor(template(WIRED), "Mcp403Stale");
-    expect(f.FilterPattern).toBe('{ $.status = "403" && $.path = "/mcp" && $.refusal = "stale" }');
-    expect(alarmsBy(template(WIRED), "Mcp403Stale")).toHaveLength(0);
+    const f = metricFilterFor(template(WIRED), "McpRefusedStale");
+    expect(f.FilterPattern).toBe('{ $.status = "401" && $.path = "/mcp" && $.refusal = "stale" }');
+    expect(alarmsBy(template(WIRED), "McpRefusedStale")).toHaveLength(0);
   });
 
   test("the access log carries the authorizer's one word", () => {
@@ -33,7 +35,7 @@ describe("refusals on /mcp ring", () => {
   });
 
   test("5 refusals in 15 min ring, and the alarm is wired to the relay", () => {
-    const alarms = alarmsBy(template(WIRED), "Mcp403") as any[];
+    const alarms = alarmsBy(template(WIRED), "McpRefused") as any[];
     expect(alarms).toHaveLength(1);
     const p = alarms[0].Properties;
     expect(p.Threshold).toBe(5);

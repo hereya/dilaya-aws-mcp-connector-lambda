@@ -64,8 +64,12 @@ test.each([
   ["no_org_ids", () => sign({ ...good(), org_ids: [] })],
 ])("refusal %s is named, and the gateway only learns it is FRESH", async (reason, make) => {
   const r = await run(make());
-  // no `reason` leaks into the gateway response — one word, for the access log
-  expect(r).toEqual({ isAuthorized: false, context: { refusal: "fresh" } });
+  // ALLOWED with the refusal and NO identity: the connector answers the 401
+  // (t_expired_token_403_stuck). The reason rides along for its WWW-Authenticate.
+  expect(r).toEqual({
+    isAuthorized: true,
+    context: { refusal: "fresh", refusalReason: reason, userId: "", orgId: "", orgIds: "", orgRole: "" },
+  });
   expect(lines).toHaveLength(1);
   expect(lines[0]).toMatchObject({ type: "mcp_authorizer_refused", reason, routeKey: "POST /mcp", ua: "Claude-User" });
 });
@@ -93,14 +97,26 @@ test.each([
   [17964, "stale"],
 ])("a token expired for %i s is a %s refusal", async (ago, refusal) => {
   const r = await run(sign({ ...good(), exp: nowSec() - ago }));
-  expect(r).toEqual({ isAuthorized: false, context: { refusal } });
+  expect(r.isAuthorized).toBe(true);
+  expect(r.context).toMatchObject({ refusal, refusalReason: "expired", orgIds: "" });
   expect(lines[0]).toMatchObject({ reason: "expired", refusal });
 });
 
 test("only `expired` can be stale — an old token refused for another reason is fresh", async () => {
   const r = await run(sign({ ...good(), exp: nowSec() - 17964 }, stranger));
-  expect(r.context).toEqual({ refusal: "fresh" });
+  expect(r.context).toMatchObject({ refusal: "fresh", refusalReason: "bad_signature" });
   expect(lines[0].reason).toBe("bad_signature");
+});
+
+// The legacy per-org mode (BOUND_ORG_ID set) keeps the historical deny.
+test("a legacy per-org deployment still DENIES at the gateway", async () => {
+  process.env.BOUND_ORG_ID = "org-a";
+  try {
+    const r = await run(sign({ ...good(), exp: nowSec() - 90 }));
+    expect(r).toEqual({ isAuthorized: false, context: { refusal: "fresh" } });
+  } finally {
+    process.env.BOUND_ORG_ID = "";
+  }
 });
 
 test("authorizeClaims names the audience refusal too", () => {

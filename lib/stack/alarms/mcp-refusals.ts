@@ -33,26 +33,31 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
   // whose Claude retries every hour, 2 requests each, with a token dead for
   // 4-5 h — 3 x 2 = 6 >= 5, every hour until they reconnect. The authorizer
   // now hands the access log one word, `refusal`: `stale` = `expired` for 2 h+.
-  // The filter excludes `stale` rather than requiring `fresh`, so a refusal
-  // the authorizer never labelled ("-") still rings: it fails LOUD.
-  const mcp403Filter = new logs.MetricFilter(stack, "Mcp403Filter", {
+  //
+  // 401, not 403, since 0.1.87 (t_expired_token_403_stuck): the authorizer
+  // ALLOWS a refused token with its `refusal` word in the context and the
+  // connector answers 401 + WWW-Authenticate, which is what makes a client
+  // re-authorize instead of replaying a dead token for ever. The gateway's OWN
+  // 401 (no Authorization header at all — scanners, curl) carries no `refusal`
+  // ("-"), so the filter REQUIRES `fresh` now: nobody holds a token there.
+  const mcp403Filter = new logs.MetricFilter(stack, "McpRefusedFilter", {
     logGroup: accessLogGroup,
     metricNamespace: "Dilaya/Connector",
-    metricName: "Mcp403",
+    metricName: "McpRefused",
     // `path`, not `routeKey`: the route is `POST /mcp` today, and a refusal
     // must keep counting if it ever moves under a proxy route.
-    filterPattern: logs.FilterPattern.literal('{ $.status = "403" && $.path = "/mcp" && $.refusal != "stale" }'),
+    filterPattern: logs.FilterPattern.literal('{ $.status = "401" && $.path = "/mcp" && $.refusal = "fresh" }'),
     metricValue: "1",
     defaultValue: 0,
   });
 
   // The stale retries, counted apart and WITHOUT an alarm: read at the sweep,
   // it says how many cut-off clients still have to reconnect.
-  new logs.MetricFilter(stack, "Mcp403StaleFilter", {
+  new logs.MetricFilter(stack, "McpRefusedStaleFilter", {
     logGroup: accessLogGroup,
     metricNamespace: "Dilaya/Connector",
-    metricName: "Mcp403Stale",
-    filterPattern: logs.FilterPattern.literal('{ $.status = "403" && $.path = "/mcp" && $.refusal = "stale" }'),
+    metricName: "McpRefusedStale",
+    filterPattern: logs.FilterPattern.literal('{ $.status = "401" && $.path = "/mcp" && $.refusal = "stale" }'),
     metricValue: "1",
     defaultValue: 0,
   });
@@ -68,14 +73,14 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription:
-        `Dilaya connector: ${MCP_REFUSALS_THRESHOLD}+ requests REFUSED (403) on /mcp in ` +
+        `Dilaya connector: ${MCP_REFUSALS_THRESHOLD}+ requests REFUSED (401 invalid_token) on /mcp in ` +
         `${MCP_REFUSALS_WINDOW_MINUTES} min — baseline is zero. Clients can no longer get or refresh a ` +
         "token: FIRST suspect our own last deploy of the OAuth AS (dilaya.eu /oauth/connect/token — read " +
         "its `connect_token_refused` lines) or of this authorizer. WHY each one was refused: the " +
         "McpAuthorizer log group, lines `mcp_authorizer_refused` (`reason`: expired, bad_signature, " +
         "issuer_mismatch, no_org_ids, audience_mismatch, jwks_unavailable…). A killed refresh chain " +
         "does NOT heal alone: those users must reconnect Dilaya in their client. Hourly retries on a " +
-        "token dead for 2 h+ are NOT counted here (metric `Mcp403Stale`): once a breakage is 2 h old " +
+        "token dead for 2 h+ are NOT counted here (metric `McpRefusedStale`): once a breakage is 2 h old " +
         "this alarm goes quiet on its own — quiet is not repaired.",
     })
   );
