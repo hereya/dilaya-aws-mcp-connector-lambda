@@ -36,6 +36,20 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
     pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     deletionProtection: true,
     removalPolicy: cdk.RemovalPolicy.RETAIN,
+    // Every short-lived row this table holds (the per-IP rate-guard counters,
+    // the request counters, the app-creation counters, the channel-event
+    // dedupe marks, the one-time setup-token claims, the OAuth state, the
+    // locks, the usage days) stamps `expires_at` in epoch SECONDS — and until
+    // 0.1.88 nothing ever read it: TTL was never switched on, so the table grew
+    // from 259 to 11 760 items in a month, 2 254 of 3 000 sampled being dead
+    // `ratecount#` rows (t_appstate_ttl_disabled). Three claim rows
+    // (hostmap-sync, domain-watch, cron-suspend-sync) store MILLISECONDS in the
+    // same attribute: read as seconds that is year ~58 000, so TTL never
+    // touches them — the same eternity they have today, and their own reads
+    // compare in ms consistently. Do NOT convert them without migrating the
+    // rows: a ms value compared against a seconds clock reads as a claim held
+    // for ever, and the sweep behind it stops.
+    timeToLiveAttribute: "expires_at",
   });
   fn.addEnvironment("APP_STATE_TABLE", appStateTable.tableName);
   appStateTable.grantReadWriteData(fn);
