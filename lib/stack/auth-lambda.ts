@@ -39,6 +39,7 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
   // Read the capability signing secret so the auth Lambda can mint tokens.
   if (capSecretEntry) capSecretEntry.secret.grantRead(authLambdaFn);
   monitoredFunctions.push({ label: "AuthLambda", fn: authLambdaFn });
+  ctx.authLambdaFn = authLambdaFn;
 
   // Read per-app Postmark server tokens from SSM SecureString. Multi-tenant:
   // one auth Lambda serves every org, so it needs /dilaya/<anyOrg>/apps/* —

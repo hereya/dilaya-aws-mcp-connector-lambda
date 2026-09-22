@@ -108,6 +108,8 @@ export interface StackContext {
   frontendAuthorizerId: string | undefined;
   authIntegrationId: string | undefined;
   frontendAuthorizerRef: lambda.Function | undefined;
+  /** The shared login/OTP Lambda — createAppStateTable gives it the OTP-send counter. */
+  authLambdaFn?: lambda.Function;
 
   // --- custom domain ---
   certificate: acm.ICertificate;

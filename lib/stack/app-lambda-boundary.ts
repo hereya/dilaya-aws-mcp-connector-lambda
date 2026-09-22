@@ -57,17 +57,20 @@ export function createAppLambdaBoundary(stack: cdk.Stack, ctx: StackContext): vo
       })
     );
   }
-  // Mail (now) + integration secrets (next milestone): a per-app frontend
-  // handler can read its OWN app's Postmark server token / integration secrets
-  // from SSM SecureString. CEILING = any org/app's `/mail/*` + `/secrets/*`
-  // params; each per-app role's inline policy (src/app-lambda.ts
-  // appRolePolicyDocument) narrows this to /dilaya/<orgId>/apps/<app>/{mail,secrets}/*.
-  // No other SSM paths (never the agent/telegram/viewer-cert params).
+  // Integration secrets: a per-app frontend handler can read its OWN app's
+  // integration secrets from SSM SecureString. CEILING = any org/app's
+  // `/secrets/*` params; each per-app role's inline policy narrows this to
+  // /dilaya/<orgId>/apps/<app>/secrets/*. No other SSM paths.
+  // NOT `/mail/*` any more (t_quota_mail_bypass, audit 22/09): an app that could
+  // read its Postmark server token could send mail around the org's
+  // `maxEmailsMonth` — the runtime's direct-Postmark fallback did exactly that,
+  // uncounted. Every app mail now goes through the connector's metered gateway,
+  // and this boundary is what takes the token away from EVERY existing role at
+  // once (their inline policies only refresh on a redeploy).
   boundaryStatements.push(
     new iam.PolicyStatement({
       actions: ["ssm:GetParameter"],
       resources: [
-        `arn:aws:ssm:${stack.region}:${stack.account}:parameter/dilaya/*/apps/*/mail/*`,
         `arn:aws:ssm:${stack.region}:${stack.account}:parameter/dilaya/*/apps/*/secrets/*`,
       ],
     }),
@@ -81,6 +84,8 @@ export function createAppLambdaBoundary(stack: cdk.Stack, ctx: StackContext): vo
       },
     })
   );
+  // ⚠️ The description is FROZEN: changing it REPLACES the managed policy, and
+  // every existing per-app role points at this ARN as its boundary.
   const appLambdaBoundary = new iam.ManagedPolicy(stack, "AppLambdaBoundary", {
     description: "Permissions ceiling for per-app frontend Lambda roles (logs + VM data routes + files bucket + own-app mail/secrets SSM).",
     statements: boundaryStatements,

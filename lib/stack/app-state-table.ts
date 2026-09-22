@@ -161,5 +161,20 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
       })
     );
   }
+  // The login Lambda counts the codes it sends per address (`otpsend#…`,
+  // t_quota_mail_bypass): every send-otp was a Postmark mail with no ceiling, so
+  // one allowlisted address could be flooded — and the app's sender reputation
+  // with it. Same LeadingKeys discipline as the authorizer: one row family,
+  // nothing else on this table (agent secrets, quota cache, LLM ledger).
+  if (ctx.authLambdaFn) {
+    ctx.authLambdaFn.addEnvironment("APP_STATE_TABLE", appStateTable.tableName);
+    ctx.authLambdaFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:UpdateItem"],
+        resources: [appStateTable.tableArn],
+        conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["otpsend#*"] } },
+      })
+    );
+  }
   ctx.appStateTable = appStateTable;
 }
