@@ -103,7 +103,11 @@ describe("edge access logs", () => {
     expect(fn).toBeDefined();
     const vars = fn.Properties.Environment.Variables;
     expect(vars.EDGE_LOG_PREFIX).toBe(logging.Prefix);
-    expect(vars.EDGE_LOG_BUCKET_DOMAIN).toBeDefined();
+    // No EDGE_LOG_BUCKET_DOMAIN (t_env_4kb_headroom): the connector rebuilds
+    // `<EDGE_LOG_BUCKET>.s3.<region>.amazonaws.com`, which only holds while the
+    // distribution logs to that bucket's REGIONAL domain.
+    expect(vars.EDGE_LOG_BUCKET_DOMAIN).toBeUndefined();
+    expect(logging.Bucket["Fn::GetAtt"]?.[1]).toBe("RegionalDomainName");
     // Same bucket, not merely some bucket: the logging Bucket is the S3 domain
     // name of the very resource whose name the connector is handed.
     const bucketRef = JSON.stringify(vars.EDGE_LOG_BUCKET);
