@@ -146,6 +146,17 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
     integration: lambdaIntegration,
   });
 
+  // Public app-STORAGE gateway (NO JWT authorizer; t_quota_files_writers).
+  // Before a per-app backend writes a file (runtime `storage.putFile*` /
+  // `getUploadUrl`) it asks the connector whether the org's file-storage
+  // cap leaves room — same DILAYA_CAPABILITY self-auth as the mail/LLM/cron
+  // gateways. Only the ANSWER crosses: the bytes still go straight to S3.
+  httpApi.addRoutes({
+    path: "/o/{orgId}/{app}/storage/{proxy+}",
+    methods: [apigwv2.HttpMethod.ANY],
+    integration: lambdaIntegration,
+  });
+
   // Public org-events webhook (NO JWT authorizer). dilaya.eu (the connect
   // AS) POSTs here on each org modification to invalidate the connector's
   // org-info cache for that org. Self-authenticated in the connector: the
