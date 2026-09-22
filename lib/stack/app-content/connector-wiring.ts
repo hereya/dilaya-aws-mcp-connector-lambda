@@ -12,6 +12,10 @@ export function wireConnectorToAppContent(stack: cdk.Stack, ctx: StackContext): 
 
   // --- Connector fn env: the connector regenerates the host map at
   //     runtime, so it needs the function name + distribution id.
+  //     NOT exported (t_env_4kb_headroom — Lambda caps the environment at
+  //     4 KB): the two buckets' regional domains and this function's ARN.
+  //     The connector rebuilds them from the bucket names, the function
+  //     name, awsRegion and AWS_ACCOUNT_ID (src/byod-domains/derived-env.ts).
   fn.addEnvironment("APP_CONTENT_DOMAIN", appContentDomain);
   fn.addEnvironment(
     "APP_CONTENT_CF_FUNCTION_NAME",
@@ -39,16 +43,8 @@ export function wireConnectorToAppContent(stack: cdk.Stack, ctx: StackContext): 
   //     bucket + prefix on the BYOD distributions it creates at runtime.
   fn.addEnvironment("EDGE_LOG_BUCKET", edgeLogBucket.bucketName);
   fn.addEnvironment("EDGE_LOG_PREFIX", EDGE_LOG_PREFIX);
-  fn.addEnvironment(
-    "EDGE_LOG_BUCKET_DOMAIN",
-    edgeLogBucket.bucketRegionalDomainName
-  );
   edgeLogBucket.grantRead(fn);
   fn.addEnvironment("APP_STATIC_BUCKET", staticAssetsBucket.bucketName);
-  fn.addEnvironment(
-    "APP_STATIC_BUCKET_DOMAIN",
-    staticAssetsBucket.bucketRegionalDomainName
-  );
   fn.addEnvironment(
     "APP_STATIC_OAC_ID",
     staticAssetsOac.originAccessControlId
@@ -74,10 +70,6 @@ export function wireConnectorToAppContent(stack: cdk.Stack, ctx: StackContext): 
       ],
       resources: [appHostKvs.keyValueStoreArn],
     })
-  );
-  fn.addEnvironment(
-    "APP_CONTENT_CF_FUNCTION_ARN",
-    appHostRouterFn.functionArn
   );
   if (appContentOriginSecret) {
     fn.addEnvironment(
