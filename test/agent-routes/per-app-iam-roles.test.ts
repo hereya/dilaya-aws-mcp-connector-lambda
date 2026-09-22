@@ -32,17 +32,16 @@ describe("per-app IAM roles (app-level isolation)", () => {
     expect(json).not.toContain("POST/admin");
   });
 
-  it("caps per-app SSM to own-app mail/secrets params (+ KMS decrypt via SSM only)", () => {
+  // t_quota_mail_bypass (22/09): /mail/* left the ceiling — an app reading its
+  // Postmark token could mail around the org's monthly allowance.
+  it("caps per-app SSM to own-app secrets params only (+ KMS decrypt via SSM only)", () => {
     const t = template();
     t.hasResourceProperties("AWS::IAM::ManagedPolicy", {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: "ssm:GetParameter",
-            Resource: Match.arrayWith([
-              Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*/mail/\\*"),
-              Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*/secrets/\\*"),
-            ]),
+            Resource: Match.stringLikeRegexp("parameter/dilaya/\\*/apps/\\*/secrets/\\*"),
           }),
           Match.objectLike({
             Action: "kms:Decrypt",
@@ -54,8 +53,9 @@ describe("per-app IAM roles (app-level isolation)", () => {
         ]),
       },
     });
-    // the mail/secrets ceiling must NOT open agent or telegram SSM paths
+    // the secrets ceiling must NOT open mail, agent or telegram SSM paths
     const json = JSON.stringify(t.toJSON());
+    expect(json).not.toContain("apps/*/mail/*");
     expect(json).not.toContain("apps/*/telegram/*");
     expect(json).not.toContain("apps/*/agent");
   });
