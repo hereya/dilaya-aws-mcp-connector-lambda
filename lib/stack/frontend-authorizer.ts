@@ -42,8 +42,10 @@ export function createFrontendAuthorizer(stack: cdk.Stack, ctx: StackContext): v
         code: lambda.Code.fromAsset(
           path.join(LIB_DIR, "frontend-authorizer")
         ),
-        memorySize: 128,
-        timeout: cdk.Duration.seconds(10),
+        // Front door too (front-door.js): it waits for the app's answer and
+        // relays up to 6 MB, so API Gateway's 30 s and room for the payload.
+        memorySize: 256,
+        timeout: cdk.Duration.seconds(30),
         environment: {
           awsRegion: stack.region,
           COGNITO_REGION: cognitoRegion,

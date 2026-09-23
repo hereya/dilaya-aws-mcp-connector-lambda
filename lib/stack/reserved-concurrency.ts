@@ -15,7 +15,8 @@ import type { StackContext } from "./context";
  * alarm (alarms/core.ts) that says the day a cap starts to bite.
  *
  * Arithmetic: the account limit is 1 000 (2 000 requested). 150+100+50+50 =
- * 350 reserved leaves 650 unreserved, far above AWS's floor of 100. A deploy
+ * 350 reserved leaves 650 unreserved (450 → 550 once the frontend authorizer
+ * became the front door and went to 200), far above AWS's floor of 100. A deploy
  * against a lower account limit fails loudly in CloudFormation and rolls back
  * — it cannot silently starve the apps.
  *
@@ -24,7 +25,9 @@ import type { StackContext } from "./context";
  */
 export const RESERVED_CONCURRENCY_DEFAULTS: Record<string, number> = {
   Handler: 150,
-  FrontendAuthorizer: 100,
+  // Also the front door (t_app_routing_o1): it holds a slot while the app
+  // answers, so site traffic counts twice here.
+  FrontendAuthorizer: 200,
   McpAuthorizer: 50,
   AuthLambda: 50,
 };

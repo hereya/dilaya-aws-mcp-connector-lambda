@@ -50,7 +50,7 @@ describe("the platform's own functions reserve concurrency", () => {
   });
 
   it("the reservation leaves AWS's 100-unreserved floor on a 1 000 account", () => {
-    const total = Object.values(reserved()).reduce<number>((s, n) => s + (n ?? 0), 0) + 100; // + frontend authorizer
+    const total = Object.values(reserved()).reduce<number>((s, n) => s + (n ?? 0), 0) + 200; // + frontend authorizer (front door)
     expect(1000 - total).toBeGreaterThanOrEqual(100);
   });
 
