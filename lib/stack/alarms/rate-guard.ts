@@ -23,6 +23,16 @@ export function createRateGuardAlarm(stack: cdk.Stack, ctx: StackContext): void 
   // named fields — two rules a green `cdk synth` does not enforce and that
   // cost a rolled-back production deploy on 2026-08-27.
   if (frontendAuthorizerRef) {
+    // Origin-lock refusals (t_origin_lock_log): a METRIC, no alarm — scanners
+    // hit the first-party path all day. Read it next to a customer's first
+    // steps: refusals on an org that just enabled its site = a lost customer.
+    new logs.MetricFilter(stack, "OriginLockDeniedFilter", {
+      logGroup: frontendAuthorizerRef.logGroup,
+      metricNamespace: "Dilaya/Connector",
+      metricName: "OriginLockDenied",
+      filterPattern: logs.FilterPattern.literal('{ $.type = "origin_lock_denied" }'),
+      metricValue: "1",
+    });
     const rateGuardFilter = new logs.MetricFilter(stack, "RateGuardFilter", {
       logGroup: frontendAuthorizerRef.logGroup,
       metricNamespace: "Dilaya/Connector",
