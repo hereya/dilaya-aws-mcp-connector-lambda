@@ -40,6 +40,7 @@ import { createSubdomainRewrite } from "./stack/frontend-distribution/edge-funct
 import { createFrontendDistribution } from "./stack/frontend-distribution/distribution";
 import { seedViewerCert } from "./stack/frontend-distribution/viewer-cert-seed";
 import { grantCustomDomainManagement } from "./stack/frontend-distribution/iam";
+import { applyReservedConcurrency } from "./stack/reserved-concurrency";
 import { createCoreAlarms } from "./stack/alarms/core";
 import { createTrafficAlarms } from "./stack/alarms/traffic";
 import { createRateGuardAlarm } from "./stack/alarms/rate-guard";
@@ -159,6 +160,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       });
     }
 
+    applyReservedConcurrency(this, ctx);
     createCoreAlarms(this, ctx);
     createTrafficAlarms(this, ctx);
     createRateGuardAlarm(this, ctx);
