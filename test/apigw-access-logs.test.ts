@@ -3,6 +3,7 @@ import { Template, Match } from "aws-cdk-lib/assertions";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { FRONT_DOOR_ROUTE_KEYS } from "../lib/stack/front-door";
 import { DilayaConnectorLambdaStack } from "../lib/dilaya-aws-mcp-connector-lambda-stack";
 
 // A request can fail AT THE GATEWAY (502 malformed response, failed
@@ -111,7 +112,12 @@ describe("HTTP API gateway-level observability", () => {
     const t = template();
     const routeKeys = Object.values(
       t.findResources("AWS::ApiGatewayV2::Route")
-    ).map((r: any) => r.Properties.RouteKey);
+    )
+      .map((r: any) => r.Properties.RouteKey)
+      // The front door's routes carry ALL tenant site traffic, which is
+      // exactly what this setting was turned off for (2026-08-29): the access
+      // log attributes every request by path. OFF on purpose, like before.
+      .filter((k: string) => !FRONT_DOOR_ROUTE_KEYS.includes(k));
     const settings = (
       Object.values(t.findResources("AWS::ApiGatewayV2::Stage"))[0] as any
     ).Properties.RouteSettings;

@@ -5,7 +5,10 @@ cdk.out/
 *.d.ts
 !jest.config.js
 !lib/authorizer/index.js
-!lib/frontend-authorizer/index.js
+# Whole directory, same trap as alarm-relay below: front-door.js (23/09) was
+# silently ignored, and index.js requires it — the published authorizer would
+# have crashed on load and taken every tenant site down with it.
+!lib/frontend-authorizer/*.js
 !lib/auth-lambda/**/*.js
 !lib/cognito-triggers/**/*.js
 !lib/byod-origin-restamp/index.js

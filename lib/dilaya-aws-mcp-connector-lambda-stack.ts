@@ -40,6 +40,7 @@ import { createSubdomainRewrite } from "./stack/frontend-distribution/edge-funct
 import { createFrontendDistribution } from "./stack/frontend-distribution/distribution";
 import { seedViewerCert } from "./stack/frontend-distribution/viewer-cert-seed";
 import { grantCustomDomainManagement } from "./stack/frontend-distribution/iam";
+import { createFrontDoor } from "./stack/front-door";
 import { applyReservedConcurrency } from "./stack/reserved-concurrency";
 import { createCoreAlarms } from "./stack/alarms/core";
 import { createTrafficAlarms } from "./stack/alarms/traffic";
@@ -106,6 +107,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
     ctx.appLambdaArnPattern = `arn:aws:lambda:${this.region}:${this.account}:function:${ctx.appLambdaNamePrefix}*`;
 
+    createFrontDoor(this, ctx);
     createAppCrons(this, ctx);
     grantAppLambdaManagement(this, ctx);
     grantConnectorSsm(this, ctx);
