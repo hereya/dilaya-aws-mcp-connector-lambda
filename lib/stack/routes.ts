@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib/core";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import type { StackContext } from "./context";
+import { OPENAI_APPS_CHALLENGE_PATH } from "./openai-challenge";
 
 export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
   const { httpApi, httpAuthorizer, lambdaIntegration, prmLambda } = ctx;
@@ -11,6 +12,17 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
     methods: [apigwv2.HttpMethod.GET],
     integration: new integrations.HttpLambdaIntegration(
       "PrmIntegration",
+      prmLambda
+    ),
+  });
+
+  // OpenAI plugin portal domain verification (public, no authorizer) — served
+  // by the PRM function, which branches on the path (see prm.ts).
+  httpApi.addRoutes({
+    path: OPENAI_APPS_CHALLENGE_PATH,
+    methods: [apigwv2.HttpMethod.GET],
+    integration: new integrations.HttpLambdaIntegration(
+      "OpenAiChallengeIntegration",
       prmLambda
     ),
   });
