@@ -16,7 +16,7 @@ describe("refusals on /mcp ring", () => {
   // 401 (no Authorization header — scanners) has no refusal word and no holder.
   test("the fresh 401s are counted on the access log, as strings, by path", () => {
     const f = metricFilterFor(template(WIRED), "McpRefused");
-    expect(f.FilterPattern).toBe('{ $.status = "401" && $.path = "/mcp" && $.refusal = "fresh" }');
+    expect(f.FilterPattern).toBe('{ $.status = "401" && ($.path = "/mcp" || $.path = "/") && $.refusal = "fresh" }');
     expect(f.MetricTransformations[0].DefaultValue).toBe(0);
   });
 
@@ -24,7 +24,7 @@ describe("refusals on /mcp ring", () => {
   // the alarm twice (16:08Z, 17:17Z) on no new breakage.
   test("stale retries are counted apart, and nothing rings on them", () => {
     const f = metricFilterFor(template(WIRED), "McpRefusedStale");
-    expect(f.FilterPattern).toBe('{ $.status = "401" && $.path = "/mcp" && $.refusal = "stale" }');
+    expect(f.FilterPattern).toBe('{ $.status = "401" && ($.path = "/mcp" || $.path = "/") && $.refusal = "stale" }');
     expect(alarmsBy(template(WIRED), "McpRefusedStale")).toHaveLength(0);
   });
 

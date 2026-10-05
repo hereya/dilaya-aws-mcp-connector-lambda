@@ -61,6 +61,7 @@ export interface StackContext {
   frontendRateWindowBlock: string;
   domainPurchase: boolean;
   expectedAudience: string;
+  mcpDomain: string | undefined;
   frontendForwardHeaders: string[];
 
   // --- hereyaProjectEnv, split three ways ---

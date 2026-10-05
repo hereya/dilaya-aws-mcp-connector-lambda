@@ -35,6 +35,17 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
     authorizer: httpAuthorizer,
   });
 
+  // The plugin host's MCP endpoint, at its root (custom-domain-dns.ts). Same
+  // integration + authorizer; the connector answers 404 on any other host.
+  if (ctx.mcpDomain) {
+    httpApi.addRoutes({
+      path: "/",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: lambdaIntegration,
+      authorizer: httpAuthorizer,
+    });
+  }
+
   // Public agent-loop routes (NO JWT authorizer). The multi-tenant connector's
   // dumb local poller (the `dilaya` CLI) exchanges a single-use setup token and
   // polls "is there work?" here; auth is the poll token, verified inside the

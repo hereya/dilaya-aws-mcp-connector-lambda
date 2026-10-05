@@ -62,6 +62,30 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
     ),
   });
 
+  // The plugin host (t_skills_plugin_path): `mcp.<zone>` mapped on the SAME
+  // API — same routes, same authorizer — so MCP answers at its root (`POST /`,
+  // routes.ts). The wildcard cert covers it; the specific record wins over the
+  // zone's `*` record. The connector reads MCP_DOMAIN to serve that host its
+  // own tool surface (no text-recipe tools: those ship as plugin skills).
+  if (ctx.mcpDomain) {
+    const mcpDomainName = new apigwv2.DomainName(stack, "McpDomainName", {
+      domainName: ctx.mcpDomain,
+      certificate,
+    });
+    new apigwv2.ApiMapping(stack, "McpApiMapping", { api: httpApi, domainName: mcpDomainName });
+    new route53.ARecord(stack, "McpAliasRecord", {
+      zone: hostedZone,
+      recordName: ctx.mcpDomain,
+      target: route53.RecordTarget.fromAlias(
+        new targets.ApiGatewayv2DomainProperties(
+          mcpDomainName.regionalDomainName,
+          mcpDomainName.regionalHostedZoneId
+        )
+      ),
+    });
+    fn.addEnvironment("MCP_DOMAIN", ctx.mcpDomain);
+  }
+
   // -------------------------------------------------------------------
   // App-content domain: host-routing (FLAT scheme) — additive vanity host.
   //
