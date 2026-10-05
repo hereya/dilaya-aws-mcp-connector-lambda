@@ -46,7 +46,7 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
     metricName: "McpRefused",
     // `path`, not `routeKey`: the route is `POST /mcp` today, and a refusal
     // must keep counting if it ever moves under a proxy route.
-    filterPattern: logs.FilterPattern.literal('{ $.status = "401" && $.path = "/mcp" && $.refusal = "fresh" }'),
+    filterPattern: logs.FilterPattern.literal('{ $.status = "401" && ($.path = "/mcp" || $.path = "/") && $.refusal = "fresh" }'),
     metricValue: "1",
     defaultValue: 0,
   });
@@ -57,7 +57,7 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
     logGroup: accessLogGroup,
     metricNamespace: "Dilaya/Connector",
     metricName: "McpRefusedStale",
-    filterPattern: logs.FilterPattern.literal('{ $.status = "401" && $.path = "/mcp" && $.refusal = "stale" }'),
+    filterPattern: logs.FilterPattern.literal('{ $.status = "401" && ($.path = "/mcp" || $.path = "/") && $.refusal = "stale" }'),
     metricValue: "1",
     defaultValue: 0,
   });

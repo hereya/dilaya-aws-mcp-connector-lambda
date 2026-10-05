@@ -59,6 +59,20 @@ describe("multi-tenant connect mode (no bound org)", () => {
       authorizeClaims({ iss: CONNECT_ISS, sub: "u1", org_ids: [A] }, env).isAuthorized
     ).toBe(false); // aud absent when required
   });
+
+  it("accepts any resource of a comma-separated list, exact strings only (plugin host)", () => {
+    const env = { ...mtEnv, expectedAudience: `${RESOURCE},https://mcp.dilaya.eu,https://mcp.dilaya.eu/` };
+    const ok = (aud: unknown) =>
+      authorizeClaims({ iss: CONNECT_ISS, sub: "u1", org_ids: [A], aud }, env).isAuthorized;
+    expect(ok(RESOURCE)).toBe(true);
+    expect(ok("https://mcp.dilaya.eu")).toBe(true);
+    expect(ok("https://mcp.dilaya.eu/")).toBe(true);
+    expect(ok(["https://other", "https://mcp.dilaya.eu"])).toBe(true);
+    expect(ok("https://mcp.dilaya.eu/x")).toBe(false);
+    expect(ok("https://mcp.dilaya.eu.evil")).toBe(false);
+    expect(ok(`${RESOURCE},https://mcp.dilaya.eu`)).toBe(false);
+    expect(ok(undefined)).toBe(false);
+  });
 });
 
 describe("legacy per-org mode (bound org) stays byte-for-byte", () => {

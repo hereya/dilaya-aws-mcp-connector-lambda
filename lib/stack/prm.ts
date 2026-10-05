@@ -37,7 +37,12 @@ export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
             "Access-Control-Allow-Origin": "*",
           },
           body: JSON.stringify({
-            resource: process.env.SERVICE_URL + "/mcp",
+            // The plugin host serves MCP at its root, so ITS resource is the
+            // bare origin; every other host keeps the historical /mcp.
+            resource: process.env.MCP_DOMAIN && event && event.requestContext
+              && event.requestContext.domainName === process.env.MCP_DOMAIN
+              ? "https://" + process.env.MCP_DOMAIN
+              : process.env.SERVICE_URL + "/mcp",
             // Multi-tenant: point at the single-URL connect AS issuer
             // (OAUTH_SERVER_URL = <base>/oauth/connect). Legacy per-org mode
             // (ORGANIZATION_ID set) keeps the old <base>/oauth/<orgId> shape.
@@ -59,6 +64,7 @@ export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
         ORGANIZATION_ID: organizationId,
         OPENAI_APPS_CHALLENGE: OPENAI_APPS_CHALLENGE_TOKEN,
         OPENAI_APPS_CHALLENGE_PATH,
+        ...(ctx.mcpDomain ? { MCP_DOMAIN: ctx.mcpDomain } : {}),
       },
     });
     monitoredFunctions.push({ label: "Prm", fn: prmLambda });

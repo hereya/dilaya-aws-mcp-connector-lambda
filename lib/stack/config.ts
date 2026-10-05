@@ -102,9 +102,22 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   // var is silently filtered). An explicit override still wins. When set, the
   // authorizer requires the token's aud to match — so a token minted for a
   // different resource can't be replayed here.
+  // The PLUGIN host (t_skills_plugin_path): a second custom domain on the SAME
+  // API, serving MCP at its root — the surface submitted to the ChatGPT and
+  // Claude directories, whose text recipes ship as plugin skills instead of
+  // tools. Derived (`mcp.<zone>`) for the same reason as the audience below;
+  // `mcpDomain=""` turns it off. The historical `<customDomain>/mcp` is untouched.
+  const mcpDomain = customDomain && customDomainZone
+    ? (process.env["mcpDomain"] ?? `mcp.${customDomainZone}`) || undefined
+    : undefined;
+  // Comma-separated: the authorizer accepts a token bound to EITHER resource.
+  // Both spellings of the root resource, since a client may keep the slash.
   const expectedAudience =
     process.env["expectedAudience"] ||
-    (customDomain ? `https://${customDomain}/mcp` : "");
+    [
+      ...(customDomain ? [`https://${customDomain}/mcp`] : []),
+      ...(mcpDomain ? [`https://${mcpDomain}`, `https://${mcpDomain}/`] : []),
+    ].join(",");
   // Extra request headers the frontend CloudFront distribution should forward to
   // origin (comma-separated). CloudFront strips any header not whitelisted, so
   // custom auth/webhook headers must be listed here. NOTE: `Authorization` CANNOT
@@ -136,6 +149,7 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   ctx.customDomainZone = customDomainZone;
   ctx.domainPurchase = domainPurchase;
   ctx.expectedAudience = expectedAudience;
+  ctx.mcpDomain = mcpDomain;
   ctx.frontendForwardHeaders = frontendForwardHeaders;
   ctx.frontendRateBlock = frontendRateBlock;
   ctx.frontendRateLimit = frontendRateLimit;
