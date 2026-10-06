@@ -101,6 +101,19 @@ describe("apphost router — login gate", () => {
     expect(cf.lastOrigin).toBeUndefined();
   });
 
+  // t_dotfile_404_all_sites: the incident's site was closed by its OWN code
+  // (no `auth` flag) — the 302 came from the origin, so the dot-path 404 must
+  // not depend on the flag.
+  it("answers the same 404 on a site WITHOUT the auth flag, and on /auth/ or /static/ dot-paths", async () => {
+    const { handler, cf } = makeHandler({ [HOST]: JSON.stringify({ o: ORG, a: "shop" }) });
+    for (const uri of ["/.env", "/.git/config", "/auth/.env", "/static/.env"]) {
+      expect((await handler(req(HOST, uri))).statusCode).toBe(404);
+    }
+    expect(cf.lastOrigin).toBeUndefined();
+    expect((await handler(req(HOST, "/.well-known/security.txt"))).uri).toBe(`/o/${ORG}/shop/site/.well-known/security.txt`);
+    expect((await handler(withCookie(HOST, "/.env"))).uri).toBe(`/o/${ORG}/shop/site/.env`);
+  });
+
   it("keeps /.well-known/* on its usual path, and a signed-in dot-path reaches the app", async () => {
     const { handler } = makeHandler(entry());
     expect((await handler(req(HOST, "/.well-known/security.txt"))).statusCode).toBe(302);
