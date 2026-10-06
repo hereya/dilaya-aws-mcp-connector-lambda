@@ -9,6 +9,9 @@
 // Exempt: /auth/* (the login flow itself), /static/* (assets — the login
 // page's own logo lives there), and the app's declared PUBLIC prefixes
 // (value flag `pub`; '/' means the root page only, never the whole site).
+// A cookie-less dot-path (/.env, /.git/…; /.well-known/* excepted) gets a bare
+// 404 instead (t_closed_site_dotfile_404): on 2026-10-06 a .env scanner that
+// followed 347 redirects in 3 s saturated the auth Lambda; this costs none.
 //
 // This is a PRESENCE check — a CloudFront Function has no crypto — so it is
 // the UX and the saving (no Lambda for an anonymous hit), never the guard:
@@ -28,6 +31,9 @@ export const LOGIN_GATE_BRANCH = `  if (e.auth && uri !== '/auth' && uri.indexOf
     }
     var ck = request.cookies || {};
     if (!pub && !ck['dilaya_id_token'] && !ck['hereya_id_token'] && !ck['dilaya_agent']) {
+      if (/\\/\\.(?!well-known(\\/|$))/.test(uri)) {
+        return { statusCode: 404, statusDescription: 'Not Found', headers: { 'cache-control': { value: 'no-store' } } };
+      }
       if (uri === '/api' || uri.indexOf('/api/') === 0) {
         return {
           statusCode: 401,
