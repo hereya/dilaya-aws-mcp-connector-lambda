@@ -85,6 +85,29 @@ describe("apphost router — login gate", () => {
     expect(out.uri).toBe(`/o/${ORG}/shop/site/orders/42`);
   });
 
+  // Incident 2026-10-06 10:47 (t_closed_site_dotfile_404): a .env scanner sent
+  // 347 requests in 3 s to a closed site; every one was redirected to
+  // /auth/login, the scanner followed, and the auth Lambda hit its reserved
+  // concurrency (117 × 503, alarms). No site serves a dot-path to an
+  // anonymous visitor, so the gate answers 404 itself — zero Lambda.
+  it("answers a cookie-less dot-path (/.env, /.git/…) with a bare 404, no login redirect", async () => {
+    const { handler, cf } = makeHandler(entry({ pub: ["/"] }));
+    for (const uri of ["/.env", "/.git/config", "/api/.env", "/app/.aws/credentials"]) {
+      const out = await handler(req(HOST, uri));
+      expect(out.statusCode).toBe(404);
+      expect(out.headers.location).toBeUndefined();
+      expect(out.headers["cache-control"].value).toBe("no-store");
+    }
+    expect(cf.lastOrigin).toBeUndefined();
+  });
+
+  it("keeps /.well-known/* on its usual path, and a signed-in dot-path reaches the app", async () => {
+    const { handler } = makeHandler(entry());
+    expect((await handler(req(HOST, "/.well-known/security.txt"))).statusCode).toBe(302);
+    expect((await handler(req(HOST, "/v1.2/notes"))).statusCode).toBe(302);
+    expect((await handler(withCookie(HOST, "/.env"))).uri).toBe(`/o/${ORG}/shop/site/.env`);
+  });
+
   it("a stopped site stops BEFORE it asks anyone to log in", async () => {
     const { handler } = makeHandler(entry({ x: 1 }));
     expect((await handler(req(HOST, "/"))).statusCode).toBe(503);
