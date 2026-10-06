@@ -9,9 +9,12 @@
 // Exempt: /auth/* (the login flow itself), /static/* (assets — the login
 // page's own logo lives there), and the app's declared PUBLIC prefixes
 // (value flag `pub`; '/' means the root page only, never the whole site).
-// A cookie-less dot-path (/.env, /.git/…; /.well-known/* excepted) gets a bare
-// 404 instead (t_closed_site_dotfile_404): on 2026-10-06 a .env scanner that
-// followed 347 redirects in 3 s saturated the auth Lambda; this costs none.
+// Before all that, on EVERY site, closed or not: a cookie-less dot-path
+// (/.env, /.git/…; /.well-known/* excepted) gets a bare 404
+// (t_closed_site_dotfile_404, widened by t_dotfile_404_all_sites): on
+// 2026-10-06 a .env scanner followed 347 login redirects in 3 s and saturated
+// the auth Lambda — on a site its OWN code closes, which the auth flag never
+// sees. Here it costs no Lambda at all.
 //
 // This is a PRESENCE check — a CloudFront Function has no crypto — so it is
 // the UX and the saving (no Lambda for an anonymous hit), never the guard:
@@ -20,7 +23,12 @@
 // the authorizer) are what this branch alone protects; the cookie's lifetime
 // is the token's (auth-lambda idTokenMaxAge), so "present" is "not expired"
 // for an honest browser.
-export const LOGIN_GATE_BRANCH = `  if (e.auth && uri !== '/auth' && uri.indexOf('/auth/') !== 0
+export const LOGIN_GATE_BRANCH = `  var ck = request.cookies || {};
+  var anon = !ck['dilaya_id_token'] && !ck['hereya_id_token'] && !ck['dilaya_agent'];
+  if (anon && /\\/\\.(?!well-known(\\/|$))/.test(uri)) {
+    return { statusCode: 404, statusDescription: 'Not Found', headers: { 'cache-control': { value: 'no-store' } } };
+  }
+  if (e.auth && uri !== '/auth' && uri.indexOf('/auth/') !== 0
       && uri !== '/static' && uri.indexOf('/static/') !== 0) {
     var pub = false;
     if (e.pub) {
@@ -29,11 +37,7 @@ export const LOGIN_GATE_BRANCH = `  if (e.auth && uri !== '/auth' && uri.indexOf
         if (pp === '/' ? uri === '/' : (uri === pp || uri.indexOf(pp + '/') === 0)) { pub = true; break; }
       }
     }
-    var ck = request.cookies || {};
-    if (!pub && !ck['dilaya_id_token'] && !ck['hereya_id_token'] && !ck['dilaya_agent']) {
-      if (/\\/\\.(?!well-known(\\/|$))/.test(uri)) {
-        return { statusCode: 404, statusDescription: 'Not Found', headers: { 'cache-control': { value: 'no-store' } } };
-      }
+    if (!pub && anon) {
       if (uri === '/api' || uri.indexOf('/api/') === 0) {
         return {
           statusCode: 401,
