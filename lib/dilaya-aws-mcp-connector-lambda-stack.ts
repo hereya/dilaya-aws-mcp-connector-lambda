@@ -27,6 +27,7 @@ import { createAppStateTable } from "./stack/app-state-table";
 import { grantCognitoProvisioning } from "./stack/cognito-provisioning-iam";
 import { createCustomDomainDns } from "./stack/custom-domain-dns";
 import { resolveAppContentDomain } from "./stack/app-content/domain";
+import { createOtpSender } from "./stack/app-content/otp-sender";
 import { createStaticAssets } from "./stack/app-content/static-assets";
 import { createAppHostRouter } from "./stack/app-content/router-function";
 import { createAppContentPolicies } from "./stack/app-content/policies";
@@ -131,6 +132,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
       if (ctx.appContentDomain) {
         resolveAppContentDomain(this, ctx);
+        createOtpSender(this, ctx);
         createStaticAssets(this, ctx);
         createAppHostRouter(this, ctx);
         createAppContentPolicies(this, ctx);
