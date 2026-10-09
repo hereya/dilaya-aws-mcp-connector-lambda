@@ -54,7 +54,6 @@ test("a valid token passes and writes nothing", async () => {
 });
 
 test.each([
-  ["no_bearer", () => null],
   ["malformed", () => "not-a-jwt"],
   ["bad_alg", () => sign(good(), privateKey, { alg: "HS256", kid: "k1" })],
   ["unknown_kid", () => sign(good(), privateKey, { alg: "RS256", kid: "other" })],
@@ -72,6 +71,22 @@ test.each([
   });
   expect(lines).toHaveLength(1);
   expect(lines[0]).toMatchObject({ type: "mcp_authorizer_refused", reason, routeKey: "POST /mcp", ua: "Claude-User" });
+});
+
+// t_dir_401_www_auth (09/10/2026): on the plugin host the authorizer runs with
+// NO identity source, so a token-less request reaches it — the discovery probe
+// every MCP client starts with (ChatGPT chat runtime, Claude, curl). Nobody
+// holds a token there: not a refusal of a token, so a third word, `probe`,
+// that the McpRefused alarm (fresh only) never counts. The connector still
+// answers the 401 + WWW-Authenticate this word carries.
+test("no Authorization header at all is a PROBE — allowed with no identity, never a fresh refusal", async () => {
+  const r = await run(null);
+  expect(r).toEqual({
+    isAuthorized: true,
+    context: { refusal: "probe", refusalReason: "no_bearer", userId: "", orgId: "", orgIds: "", orgRole: "" },
+  });
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatchObject({ type: "mcp_authorizer_refused", reason: "no_bearer", refusal: "probe" });
 });
 
 test("who was refused is written ONLY once the signature held — and never the token", async () => {
