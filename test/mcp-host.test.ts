@@ -43,15 +43,32 @@ describe("the plugin host mcp.<zone>", () => {
     expect(records).toContain("mcp.dilaya.eu.");
   });
 
-  it("serves MCP at the root behind the same authorizer as /mcp", () => {
+  // t_dir_401_www_auth (09/10/2026): the chat runtime of ChatGPT probes the
+  // plugin host WITHOUT an Authorization header. With that header as identity
+  // source the gateway answers its own bare 401 (no WWW-Authenticate) before
+  // the authorizer runs, and the client gives up ("reconnect Dilaya"). So the
+  // root route has its OWN authorizer — same Lambda, NO identity source (always
+  // invoked, like the frontend authorizer), NO cache (caching needs a source).
+  // `/mcp` keeps the cached, header-keyed one byte for byte.
+  it("serves MCP at the root behind its own always-invoked authorizer — same Lambda as /mcp", () => {
     const t = template(CUSTOM);
     const routes = resources(t, "AWS::ApiGatewayV2::Route");
     const root = routes.find((r) => r.Properties.RouteKey === "POST /");
     const mcp = routes.find((r) => r.Properties.RouteKey === "POST /mcp");
     expect(root).toBeDefined();
     expect(root!.Properties.AuthorizationType).toBe("CUSTOM");
-    expect(root!.Properties.AuthorizerId).toEqual(mcp!.Properties.AuthorizerId);
     expect(root!.Properties.Target).toEqual(mcp!.Properties.Target);
+    expect(root!.Properties.AuthorizerId).not.toEqual(mcp!.Properties.AuthorizerId);
+    const authorizers = t.findResources("AWS::ApiGatewayV2::Authorizer");
+    const byRef = (ref: any) => authorizers[ref.Ref].Properties;
+    const rootAuth = byRef(root!.Properties.AuthorizerId);
+    const mcpAuth = byRef(mcp!.Properties.AuthorizerId);
+    expect(rootAuth.AuthorizerUri).toEqual(mcpAuth.AuthorizerUri);
+    expect(rootAuth.EnableSimpleResponses).toBe(true);
+    expect(rootAuth.IdentitySource).toEqual([]);
+    expect(rootAuth.AuthorizerResultTtlInSeconds).toBe(0);
+    expect(mcpAuth.IdentitySource).toEqual(["$request.header.Authorization"]);
+    expect(mcpAuth.AuthorizerResultTtlInSeconds).toBe(300);
   });
 
   it("accepts a token bound to either resource, and tells the connector its host", () => {

@@ -98,6 +98,8 @@ export interface StackContext {
 
   // --- HTTP API ---
   httpAuthorizer: authorizers.HttpLambdaAuthorizer;
+  /** Same function, no identity source, no cache — the plugin host’s `POST /` only. */
+  mcpHostAuthorizer: authorizers.HttpLambdaAuthorizer;
   httpApi: apigwv2.HttpApi;
   accessLogGroup: logs.LogGroup;
   cfnDefaultStage: apigwv2.CfnStage;

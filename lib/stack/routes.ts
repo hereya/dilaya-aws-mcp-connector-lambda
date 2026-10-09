@@ -5,7 +5,7 @@ import type { StackContext } from "./context";
 import { OPENAI_APPS_CHALLENGE_PATH } from "./openai-challenge";
 
 export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
-  const { httpApi, httpAuthorizer, lambdaIntegration, prmLambda } = ctx;
+  const { httpApi, httpAuthorizer, lambdaIntegration, mcpHostAuthorizer, prmLambda } = ctx;
 
   httpApi.addRoutes({
     path: "/.well-known/oauth-protected-resource",
@@ -36,13 +36,16 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
   });
 
   // The plugin host's MCP endpoint, at its root (custom-domain-dns.ts). Same
-  // integration + authorizer; the connector answers 404 on any other host.
+  // integration; the connector answers 404 on any other host. Its OWN
+  // authorizer (mcp-authorizer.ts): same function, always invoked, so a
+  // token-less probe gets the connector's 401 + WWW-Authenticate instead of
+  // the gateway's bare one (t_dir_401_www_auth).
   if (ctx.mcpDomain) {
     httpApi.addRoutes({
       path: "/",
       methods: [apigwv2.HttpMethod.POST],
       integration: lambdaIntegration,
-      authorizer: httpAuthorizer,
+      authorizer: mcpHostAuthorizer,
     });
   }
 

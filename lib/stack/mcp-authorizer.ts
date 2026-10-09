@@ -34,4 +34,26 @@ export function createMcpAuthorizer(stack: cdk.Stack, ctx: StackContext): void {
     }
   );
   ctx.httpAuthorizer = httpAuthorizer;
+
+  // The PLUGIN host’s authorizer (t_dir_401_www_auth, 09/10/2026): the SAME
+  // function, bound to `POST /` on mcp.<zone> only (routes.ts). With the
+  // Authorization header as identity source, a request WITHOUT it never reaches
+  // the function: the gateway answers its own bare 401 (no WWW-Authenticate),
+  // and the ChatGPT chat runtime — which probes exactly like that — gives up with
+  // « reconnect Dilaya » (5 probes on 09/10, 8 on 05/10, never a success). So
+  // this one has NO identity source (always invoked, the frontend authorizer’s
+  // proven shape) and NO cache (the gateway caches only on identity sources):
+  // every call on the plugin host runs the function (~ms, JWKS cached 1 h),
+  // and a token-less probe comes back as `refusal: probe` for the connector’s
+  // 401 + WWW-Authenticate. `/mcp` keeps the cached, header-keyed authorizer
+  // above byte for byte. Materialized only when a route binds it.
+  ctx.mcpHostAuthorizer = new authorizers.HttpLambdaAuthorizer(
+    "McpHostAuthorizer",
+    authorizerFn,
+    {
+      responseTypes: [authorizers.HttpLambdaResponseType.SIMPLE],
+      identitySource: [],
+      resultsCacheTtl: cdk.Duration.seconds(0),
+    }
+  );
 }

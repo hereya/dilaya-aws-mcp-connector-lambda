@@ -39,7 +39,10 @@ export function createMcpRefusalsAlarm(stack: cdk.Stack, ctx: StackContext): voi
   // connector answers 401 + WWW-Authenticate, which is what makes a client
   // re-authorize instead of replaying a dead token for ever. The gateway's OWN
   // 401 (no Authorization header at all — scanners, curl) carries no `refusal`
-  // ("-"), so the filter REQUIRES `fresh` now: nobody holds a token there.
+  // ("-"), so the filter REQUIRES `fresh` now: nobody holds a token there. On
+  // the plugin host (`POST /`, authorizer always invoked since 0.1.102) the
+  // same token-less request is the authorizer's `probe` word — the discovery
+  // probe every MCP client starts with — and is not counted either.
   const mcp403Filter = new logs.MetricFilter(stack, "McpRefusedFilter", {
     logGroup: accessLogGroup,
     metricNamespace: "Dilaya/Connector",
