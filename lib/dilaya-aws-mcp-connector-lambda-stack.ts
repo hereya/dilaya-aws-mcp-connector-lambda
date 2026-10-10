@@ -50,6 +50,7 @@ import { createRequestCapAlarm } from "./stack/alarms/request-cap";
 import { createPlatform5xxAlarm } from "./stack/alarms/platform-5xx";
 import { createMcpRefusalsAlarm } from "./stack/alarms/mcp-refusals";
 import { createAppStateAlarms } from "./stack/alarms/dynamodb";
+import { createSweepTick } from "./stack/sweep-tick";
 import { createFilesDomain } from "./stack/files-domain";
 
 /**
@@ -176,5 +177,9 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // Last on purpose: it only adds resources and one env var, so appending it
     // cannot re-order anything the steps above synthesized.
     createFilesDomain(this, ctx);
+
+    // After it for the same reason: a schedule rule and a resource policy, no
+    // role statement, no env var — nothing above can be re-ordered by it.
+    createSweepTick(this, ctx);
   }
 }
