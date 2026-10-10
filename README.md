@@ -334,6 +334,25 @@ that *no* alarm is left without actions once the relay is configured, so a futur
 `alertOn()` fails there instead of surfacing in a sweep six weeks later. Both test files are
 mutation-checked: removing the wiring makes them fail.
 
+## The sweep tick — housekeeping off the request path (0.1.103)
+
+`lib/stack/sweep-tick.ts` adds one EventBridge rule, `rate(5 minutes)`, whose only target is the
+connector itself, invoked with the bare envelope `{"__dilaya":"sweep"}` (same shape as the alarm
+envelope: no org, no app, no sweep name — there is no field a caller could steer at a tenant). The
+connector branches on the marker (`src/handler/sweep-envelope.ts`, 0.1.358) and runs its six
+housekeeping sweeps — runtime-layer propagation, the edge host map, edge usage, cron suspension,
+stalled custom domains, the one-time auth-route heal — in THAT invocation and in no other.
+
+Until then every sweep was `await`ed at the top of **every** invocation: each claims a DynamoDB
+window, and the one request that **won** the claim ran the work inline, before its own answer —
+measured 2026-10-10 at 8 072 ms on the landing's billing tick, with the host-map floor check and an
+edge-usage read on the same request (t_floor_syncs_offpath). The DynamoDB claims are unchanged (a
+tick may lose one to a previous tick still holding the window — the normal case); the rule exists on
+every deployment shape (a sweep whose feature is off returns at once); the grant it adds is a
+**resource policy** for `events.amazonaws.com`, not a statement on the connector role, so the
+role's statement order is untouched. `test/sweep-tick.test.ts` pins the cadence, the target, the
+bare envelope and the permission.
+
 ## Source layout — the stack is a list of build steps
 
 `lib/dilaya-aws-mcp-connector-lambda-stack.ts` used to be one 3 100-line constructor. It is now a
