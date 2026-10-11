@@ -189,6 +189,39 @@ answers an off-list address like one without a passkey (`no_passkey`), so the cl
 the uniform e-mail path. One `auth_no_code` log line (app + reason, never the address). Without a
 capability secret (local runs) the key is per-process. `test/auth-no-enumeration.test.ts`.
 
+## The login page under a burst (t_login_burst_authlambda, 0.1.104)
+
+The auth Lambda is **one function with 50 reserved slots, shared by every tenant site**, and a cold
+login page is a 3–5 s render (registry + branding + SSM per instance). On 2026-10-10 a single Google
+Cloud address loaded one app's `/auth/login` **101 times in 10 s** and held **29 of the 50** slots;
+the 06/10 variant of the same scanner (dot-paths redirected to login, since closed) reached the cap —
+117 throttles, every site's login down for the burst. At ~600/minute the burst sat far under both
+site guards (1 000/minute, 2 000/quarter-hour). Two brakes, both on by default:
+
+1. **The anonymous login page is cached at the edge for 60 s.** The auth Lambda answers the GET with
+   `Cache-Control: max-age=0, s-maxage=60` (`loginPageResponse`, the only cacheable shape it has):
+   the CDN keeps it a minute, the browser revalidates as before, no `public` for other caches. The
+   app-content cache policy already honoured origin Cache-Control (min TTL 0) and keyed on every
+   query string and the session cookies — `return_url`, `?email=`, a `dilaya_last_email` pre-fill
+   and an expired id-token cookie each get their own entry — and now also keys on
+   **`x-dilaya-app-host`** (the passkey button shows on the rpId host only) and **`Accept-Language`**
+   (an app without a stored language renders the browser's). Both were already forwarded; a header in
+   the key changes nothing for the origin. The 302 for a signed-in visitor carries no Cache-Control
+   and is never cached; the path URL (`app.dilaya.eu/o/…`) runs with caching disabled. A plain burst
+   now costs the origin one render per app per minute.
+2. **The login tree has its own per-IP minute counter in the frontend authorizer** — `60` per
+   (app, address, minute) on `/auth/*` only, **enforced** (`rate_guard` line, `window: "1m-auth"`,
+   `blocked: true` → 403), the same atomic-ADD row shape as the two site counters
+   (`rateauth#<org>#<app>#<ipTag>#<minute>`), written on no other path. A login is at most five
+   requests, so 60 is twelve full logins a minute from one address; it holds a burst that defeats the
+   cache (a varying query string, the POSTs) at ~1/s × 5 s ≈ 5 slots instead of 29.
+   `FRONTEND_AUTH_RATE_BLOCK=false` → count only; `FRONTEND_AUTH_RATE_LIMIT=0` → no counter. The
+   `RateGuardAlarm` fires on the same line as before — read `window` to know which counter tripped.
+
+Deliberately **not** done: raising the reserved concurrency (moves the ceiling, closes nothing, eats
+the account's shared budget). Pinned by `test/auth-login-cache.test.ts`, `test/login-page-cache-key.test.ts`
+and `test/rate-guard-auth.test.ts`.
+
 ## The state table's recovery path
 
 `AppStateTable` started life as cheap "is there something new?" flags, and the comment above it still

@@ -53,10 +53,11 @@ export function createRateGuardAlarm(stack: cdk.Stack, ctx: StackContext): void 
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
         alarmDescription:
           "Dilaya connector: a tenant frontend crossed a per-IP rate guard in the last 5 min — " +
-          "either the minute one (default 1000 requests per minute per IP, enforced) or the long " +
+          "either the minute one (default 1000 requests per minute per IP, enforced), the long " +
           "window (default 2000 per 15 minutes per IP, COUNT mode until FRONTEND_RATE_WINDOW_BLOCK " +
-          "is true). Read the `rate_guard` lines in the FrontendAuthorizer log group: `window` " +
-          "says which counter tripped (`1m` or `15m`), `blocked` whether it was enforced, `hits` " +
+          "is true), or the login-tree one (default 60 per minute per IP on /auth/* only, " +
+          "enforced). Read the `rate_guard` lines in the FrontendAuthorizer log group: `window` " +
+          "says which counter tripped (`1m`, `15m` or `1m-auth`), `blocked` whether it was enforced, `hits` " +
           "how far over, `app`/`org` who, and `ip` is a truncated hash (the same tag across a " +
           "window = the same address). One hashed ip far over the limit on one path is a runaway " +
           "loop in that app's page; several distinct tags near the limit is more likely a shared " +
