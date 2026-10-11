@@ -219,8 +219,46 @@ site guards (1 000/minute, 2 000/quarter-hour). Two brakes, both on by default:
    `RateGuardAlarm` fires on the same line as before — read `window` to know which counter tripped.
 
 Deliberately **not** done: raising the reserved concurrency (moves the ceiling, closes nothing, eats
-the account's shared budget). Pinned by `test/auth-login-cache.test.ts`, `test/login-page-cache-key.test.ts`
+the account's shared budget) — the headroom alarms below say the day that becomes the right move. Pinned by `test/auth-login-cache.test.ts`, `test/login-page-cache-key.test.ts`
 and `test/rate-guard-auth.test.ts`.
+
+## Concurrency headroom and the scaling ladder (t_concurrency_headroom, 0.1.105)
+
+Every Lambda in the account — the connector, its authorizers, the auth Lambda and **every tenant app
+backend** — draws from ONE regional pool. The platform's own functions reserve a slice
+(`lib/stack/reserved-concurrency.ts`: connector 150, front door 200, MCP authorizer 50, auth
+Lambda 50 = **450**), and the account limit is **2 000** (the 400 → 2 000 raise asked on 22/09/2026
+was granted; verified live on 11/10 against Service Quotas `L-B99A9384`, eu-west-1) — so **1 550**
+slots stay unreserved for the apps.
+
+**Concurrency is not the number of organisations.** It counts requests in flight at the same
+instant: a thousand quiet sites cost nothing, and ordinary small-business traffic across a thousand
+orgs is a few percent of the front door. What eats the margin is ONE burst — a scanner on a login
+page (10/10: 29 of 50), a viral site, a tenant loop, a cron storm — and until 0.1.105 the first
+instrument to notice was `Throttles >= 1`, i.e. visitors already refused.
+
+**The headroom alarms** (`lib/stack/alarms/headroom.ts`) watch the same `ConcurrentExecutions` the
+reservation caps, at **70 %** of each ceiling, `Maximum` over 5 min, 2 datapoints of 3 (a single
+spike the edge cache absorbs stays quiet; a sustained climb does not). Calibrated on 14 days to
+11/10: auth Lambda ≤ 40 (50 on the 06/10 incident), front door ≤ 56 (180 that day), account ≤ 82
+(359 that day) — only the incident day would have fired. A function whose reservation is removed
+(`none`) has no alarm of its own; the account alarm (no `FunctionName` dimension) still covers it.
+
+**The ladder — a parameter deploy, no code.** Each reservation is `-p reservedConcurrency<Label>`
+and the account limit `-p lambdaAccountConcurrency` (declared in `hereyarc.yaml`; a `-p` reaches
+this package only if declared there, and the connector's `release.yml` passes each one only when
+its GitHub Variable is set). The alarm thresholds derive from the figures in force, so there is no
+second number to forget:
+
+| signal | reading | move |
+|---|---|---|
+| a function's headroom alarm, one address in the `rate_guard` lines | a scanner | nothing to scale — the brakes of `t_login_burst_authlambda` hold it |
+| a function's headroom alarm, many addresses, or repeating | growth | raise that reservation (auth Lambda 50 → 150, front door 200 → 500 are the first steps), keep the sum ≥ 100 under the account limit |
+| `AccountConcurrencyHeadroomAlarm` | the tenants' pool is filling | find the function (`ConcurrentExecutions` by `FunctionName`): a loop is throttled by its org's gateway rate, a cron storm by `CRON_LIMIT`; if it is growth, ask AWS for the next tier (5 000) and set `lambdaAccountConcurrency` to the granted figure |
+
+Beyond that (≳ 1 000 active orgs), the next step is isolation — an auth Lambda per org — and it
+is a separate decision, not needed today. Pinned by `test/core-alarms/headroom.test.ts` and
+`test/reserved-concurrency.test.ts`.
 
 ## The state table's recovery path
 
@@ -272,7 +310,7 @@ on both sides, plus the fact that the alarm carries actions and the topic carrie
 ≥ 1 subscription, and the alarm must be flipped for real (`aws cloudwatch set-alarm-state`) with the
 message actually arriving.
 
-### What is alarmed (14 alarms), and why each layer needs its own
+### What is alarmed (24 alarms in the production shape, 0.1.105), and why each layer needs its own
 
 Alarms are created **unconditionally** — they stay readable in CloudWatch and other subscribers stay
 possible; only the *speaking* depends on the two inputs above.
@@ -280,6 +318,7 @@ possible; only the *speaking* depends on the two inputs above.
 | Alarm | Threshold | The blind spot it covers |
 |---|---|---|
 | `Errors` + `Throttles`, per Lambda (5 functions → 10 alarms) | ≥ 1 / 5 min | the layer that throws |
+| `ConcurrentExecutions` **headroom**, per reserved Lambda (4 alarms) + the whole account (1) — `*HeadroomAlarm`, `AccountConcurrencyHeadroomAlarm` (0.1.105) | Maximum ≥ **70 %** of the reservation in force (35 / 35 / 105 / 140) or of the declared account limit (1 400 of 2 000), 2 of 3 five-minute windows | a reservation is also a **cap**, and `Throttles` rings once visitors are already refused: on 06/10 the auth Lambda sat at 50/50 with no signal before. The thresholds derive from the deploy params, so raising a reservation moves its alarm. The account one has **no dimension** — it is the only alarm that sees the tenants' shared pool |
 | `HttpApiPlatform5xx` (metric math: `HttpApi5xx - HttpApi5xxTenantApp - HttpApi5xxUpstream`) | ≥ 1 / 5 min | a 502/504 at the **gateway** never makes the Lambda throw, so `AWS/Lambda Errors` reads 0 |
 | `AppStateTable` `SystemErrors` + `ThrottledRequests` | ≥ 1 / 5 min | a throttled state write is neither a Lambda error nor a gateway error |
 | `McpRefusals` (`Mcp403`: access-log `403` on path `/mcp`, **fresh only** — `refusal = "fresh"`; `stale` (hourly retry on a token dead 2 h+) and `probe` (no `Authorization` header at all, on the plugin host — the discovery probe every MCP client starts with, 0.1.102) are not counted; a client retrying hourly on a token `expired` for 2 h+ is counted apart in `Mcp403Stale`, no alarm) | ≥ 5 / 15 min | a **refusal** is not an error, a 5xx or a throttle: on 2026-09-21 `/mcp` answered 403 to almost everyone for ~2 h (188 refusals) and nothing rang. Baseline over the 7 days before: **zero**. Counted on the access log because the gateway caches a refusal 5 min — the authorizer does not even run. WHY each one was refused: `mcp_authorizer_refused` lines (`reason`) in the McpAuthorizer log group — never the token, claims only once the signature held |

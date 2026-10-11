@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { DilayaConnectorLambdaStack } from "../lib/dilaya-aws-mcp-connector-lambda-stack";
-import { reservedConcurrencyFor } from "../lib/stack/reserved-concurrency";
+import { LAMBDA_ACCOUNT_CONCURRENCY_DEFAULT, reservedConcurrencyFor } from "../lib/stack/reserved-concurrency";
 
 // t_reserved_concurrency (23/09/2026): the connector and its authorizers drew
 // from the same unreserved pool as every tenant app backend, so one app's loop
@@ -49,9 +49,13 @@ describe("the platform's own functions reserve concurrency", () => {
     expect(pick(all, "AuthLambdaHandler")).toBe(50);
   });
 
-  it("the reservation leaves AWS's 100-unreserved floor on a 1 000 account", () => {
-    const total = Object.values(reserved()).reduce<number>((s, n) => s + (n ?? 0), 0) + 200; // + frontend authorizer (front door)
-    expect(1000 - total).toBeGreaterThanOrEqual(100);
+  // The account limit is 2 000 (granted 22/09/2026, verified live 11/10); the
+  // reservations must leave AWS's 100-unreserved floor under it — and the
+  // headroom alarms assume the same figure, so both read the one constant.
+  it("the reservation leaves AWS's 100-unreserved floor under the declared account limit", () => {
+    const total = Object.values(reserved()).reduce<number>((s, n) => s + (n ?? 0), 0);
+    expect(LAMBDA_ACCOUNT_CONCURRENCY_DEFAULT - total).toBeGreaterThanOrEqual(100);
+    expect(total).toBe(450);
   });
 
   it("a deploy param overrides, 0 / none removes, garbage is refused", () => {

@@ -1,5 +1,5 @@
 name: dilaya/aws-mcp-connector-lambda
-version: 0.1.104
+version: 0.1.105
 description: "Deploy package for the multi-tenant Dilaya MCP connector: a single Lambda behind API Gateway serving ONE /mcp endpoint for every organization. The authorizer validates the single-URL connect AS token (org_ids set) instead of binding a single org at deploy time. Also serves the static, no-authorizer agent-loop, Telegram, and integration-secret setup routes (/o/{orgId}/{app}/{agent,telegram,secrets}/{proxy+}), plus the outbound MCP-connection surfaces: /mcp-connections/{proxy+} (OAuth consent + fixed DCR callback) and /o/{orgId}/{app}/mcp/{proxy+} (the capability-authenticated gateway app backends call granted external-MCP tools through — connection tokens at /dilaya/*/mcp/*, connector-only, outside the per-app boundary), plus /o/{orgId}/{app}/cron/{proxy+} (capability-authenticated app-cron gateway) and the app-cron EventBridge Scheduler layer: one schedule group ('<stack>-app-crons') + an invoke role (scheduler.amazonaws.com → app Lambdas only) that the connector passes when creating schedules (scheduler CRUD scoped to the group, PassRole pinned to the Scheduler service, per-app boundary untouched); SSM secret access is multi-tenant (/dilaya/*/apps/*), isolation enforced in code. The per-app Lambda permissions boundary additionally allows own-app integration-secret SSM reads (/dilaya/*/apps/*/secrets/*) + KMS-via-SSM decrypt — never /mail/* (app mail goes through the metered gateway). When appContentDomain is set, provisions the app-content-domain edge layer: a CloudFront distribution (*.appContentDomain, wildcard cert + DNS) with a viewer-request Function that host-routes flat vanity hosts <app>--<orgslug>.appContentDomain to the per-app site/auth routes (tagging x-dilaya-app-host), plus auth-lambda vanity-host cookie/redirect awareness — inert without appContentDomain. The auth Lambda also serves a Cognito-native WebAuthn passkey sign-in + registration (auth/passkey/*), on per app when the connector's enable-auth sets passkeys/passkey_rp_id on _auth_config. Forked from hereya/aws-mcp-app-lambda."
 visibility: private
 iac: cdk
@@ -71,3 +71,26 @@ parameters:
     description: "Nom de l'app dont l'agent code reçoit les alarmes de la plateforme (p. ex. l'app de suivi de développement). DOIT être fourni avec alarmInboxOrg — les deux conditionnent le câblage du réveil."
     mandatory: false
     default: ""
+  # Concurrency reservations + the declared account limit (t_reserved_concurrency,
+  # t_concurrency_headroom). All optional: absent → the figures in
+  # lib/stack/reserved-concurrency.ts (150 / 200 / 50 / 50, account 2 000). Each
+  # reservation is also a cap, and the HEADROOM alarm of each function derives
+  # its threshold (70 %) from the figure in force — so the scaling ladder is a
+  # parameter deploy: raise the figure here, the alarm moves with it. `0` or
+  # `none` removes a reservation (and its headroom alarm). A -p only reaches
+  # this package if DECLARED here — undeclared, it is dropped in silence.
+  reservedConcurrencyHandler:
+    description: "Reserved concurrent executions of the connector Lambda (default 150). 0/none removes the reservation."
+    mandatory: false
+  reservedConcurrencyFrontendAuthorizer:
+    description: "Reserved concurrent executions of the frontend authorizer, the front door of every tenant site — it holds a slot while the app answers (default 200). 0/none removes the reservation."
+    mandatory: false
+  reservedConcurrencyMcpAuthorizer:
+    description: "Reserved concurrent executions of the /mcp JWT authorizer (default 50). 0/none removes the reservation."
+    mandatory: false
+  reservedConcurrencyAuthLambda:
+    description: "Reserved concurrent executions of the shared login/OTP Lambda (default 50). 0/none removes the reservation."
+    mandatory: false
+  lambdaAccountConcurrency:
+    description: "The regional Lambda concurrency limit the account was granted (default 2 000, granted 22/09/2026). No API is read at synth: when a support case grants a new tier, it goes here — the account-wide headroom alarm fires at 70 % of it."
+    mandatory: false
