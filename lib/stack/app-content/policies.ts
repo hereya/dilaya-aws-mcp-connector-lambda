@@ -30,12 +30,27 @@ export function createAppContentPolicies(stack: cdk.Stack, ctx: StackContext): v
     "AppContentCachePolicy",
     {
       comment:
-        "Respect origin Cache-Control (opt-in); session cookies in the cache key",
+        "Respect origin Cache-Control (opt-in); session cookies, app host and Accept-Language in the cache key",
       minTtl: cdk.Duration.seconds(0),
       defaultTtl: cdk.Duration.seconds(0),
       maxTtl: cdk.Duration.days(365),
       cookieBehavior: cloudfront.CacheCookieBehavior.allowList(...SESSION_COOKIES),
-      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+      // The two request facts a cached tenant page may render from
+      // (t_login_burst_authlambda, 0.1.104 — the login page is the first
+      // response the platform itself marks cacheable, 60 s at the edge):
+      // the vanity host the router function tags in x-dilaya-app-host (the
+      // passkey button shows on the rpId host only, and the same app can be
+      // served on several hosts of ONE distribution: prod + staging), and
+      // Accept-Language (an app that never stored a language renders the
+      // browser's). Without them a French visitor's page would be served to
+      // the next English one for a minute. A header in the cache key is also
+      // forwarded, so nothing changes for the origin: both were already in
+      // the origin-request policy below. Cache-hit rates on an app's own
+      // opt-in responses split by language, which is the correct split.
+      headerBehavior: cloudfront.CacheHeaderBehavior.allowList(
+        "x-dilaya-app-host",
+        "Accept-Language"
+      ),
       queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
       enableAcceptEncodingGzip: true,
       enableAcceptEncodingBrotli: true,

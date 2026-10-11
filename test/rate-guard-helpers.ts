@@ -13,8 +13,8 @@
 // dodged by a forged header, and it can never deny a request by failing.
 
 export const sends: any[] = [];
-/** What the atomic ADD reports back: per-minute bucket / long-window bucket. */
-export const state = { hits: 1, winHits: 1 };
+/** What the atomic ADD reports back: per-minute / long-window / auth-tree bucket. */
+export const state = { hits: 1, winHits: 1, authHits: 1 };
 
 jest.mock(
   "@aws-sdk/client-secrets-manager",
@@ -42,6 +42,9 @@ jest.mock(
           if (String(cmd.input?.Key?.pk || "").startsWith("ratewin#")) {
             return Promise.resolve({ Attributes: { hits: state.winHits } });
           }
+          if (String(cmd.input?.Key?.pk || "").startsWith("rateauth#")) {
+            return Promise.resolve({ Attributes: { hits: state.authHits } });
+          }
           return Promise.resolve({});
         },
       }),
@@ -67,6 +70,8 @@ export const rateWrites = () =>
   sends.filter((c) => String(c.input?.Key?.pk || "").startsWith("ratecount#"));
 export const windowWrites = () =>
   sends.filter((c) => String(c.input?.Key?.pk || "").startsWith("ratewin#"));
+export const authWrites = () =>
+  sends.filter((c) => String(c.input?.Key?.pk || "").startsWith("rateauth#"));
 
 export function siteEvent(path: string, xff?: string) {
   return {
@@ -86,17 +91,20 @@ export function load(env: Record<string, string> = {}) {
   delete process.env.FRONTEND_RATE_WINDOW_LIMIT;
   delete process.env.FRONTEND_RATE_WINDOW_MINUTES;
   delete process.env.FRONTEND_RATE_WINDOW_BLOCK;
+  delete process.env.FRONTEND_AUTH_RATE_LIMIT;
+  delete process.env.FRONTEND_AUTH_RATE_BLOCK;
   Object.assign(process.env, env);
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   return require("../lib/frontend-authorizer/index.js");
 }
 
 
-/** Fresh state before each test: no sends, both counters at 1. */
+/** Fresh state before each test: no sends, every counter at 1. */
 export function resetState() {
   sends.length = 0;
   state.hits = 1;
   state.winHits = 1;
+  state.authHits = 1;
 }
 
 /** The `rate_guard` lines a test's console.warn spy captured. */
