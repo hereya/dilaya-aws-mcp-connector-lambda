@@ -44,6 +44,7 @@ import { grantCustomDomainManagement } from "./stack/frontend-distribution/iam";
 import { createFrontDoor } from "./stack/front-door";
 import { applyReservedConcurrency } from "./stack/reserved-concurrency";
 import { createCoreAlarms } from "./stack/alarms/core";
+import { createHeadroomAlarms } from "./stack/alarms/headroom";
 import { createTrafficAlarms } from "./stack/alarms/traffic";
 import { createRateGuardAlarm } from "./stack/alarms/rate-guard";
 import { createRequestCapAlarm } from "./stack/alarms/request-cap";
@@ -167,6 +168,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
     applyReservedConcurrency(this, ctx);
     createCoreAlarms(this, ctx);
+    createHeadroomAlarms(this, ctx);
     createTrafficAlarms(this, ctx);
     createRateGuardAlarm(this, ctx);
     createRequestCapAlarm(this, ctx);
