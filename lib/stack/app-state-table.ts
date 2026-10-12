@@ -143,18 +143,21 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
         resources: [appStateTable.tableArn],
         conditions: {
           "ForAllValues:StringLike": {
-            // Two row families, both counters: the monthly consumption count
-            // and the per-IP-per-minute rate guard. Still nothing else on
-            // this table.
-            // Four counter families now: the per-app monthly count, the
-            // per-IP-per-minute rate guard, its long-window twin, and the
-            // per-ORG monthly count that the plan's request cap is enforced
-            // against. Still nothing else on this table.
+            // Five counter families, nothing else on this table: the per-app
+            // monthly count, the per-IP-per-minute rate guard, its long-window
+            // twin, the per-ORG monthly count the plan's request cap is
+            // enforced against, and the login tree's own minute brake.
+            // ⚠️ A family the handler writes but this list omits is refused on
+            // EVERY call and the handler fails open — 0.1.104 shipped
+            // `rateauth#` without its grant and the brake counted nothing for
+            // a day (t_rateauth_leadingkeys). test/app-state-leading-keys.test.ts
+            // now confronts the handler's pk builders with this list.
             "dynamodb:LeadingKeys": [
               "reqcount#*",
               "ratecount#*",
               "ratewin#*",
               "reqcountorg#*",
+              "rateauth#*",
             ],
           },
         },

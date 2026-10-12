@@ -222,6 +222,14 @@ Deliberately **not** done: raising the reserved concurrency (moves the ceiling, 
 the account's shared budget) — the headroom alarms below say the day that becomes the right move. Pinned by `test/auth-login-cache.test.ts`, `test/login-page-cache-key.test.ts`
 and `test/rate-guard-auth.test.ts`.
 
+**0.1.106 — the brake had no IAM (t_rateauth_leadingkeys, 2026-10-12).** 0.1.104 shipped the
+`rateauth#` row without adding it to the authorizer's `dynamodb:LeadingKeys` allow-list on
+AppStateTable: every UpdateItem was refused, the fail-open `catch` served every page, and the brake
+counted **nothing** for its first day (228 `auth rate check failed` lines in 24 h, no customer
+impact). The grant now names five families, and `test/app-state-leading-keys.test.ts` reads the
+handler's pk builders and the synthesized policy side by side — a counter family can no longer leave
+before its IAM.
+
 ## Concurrency headroom and the scaling ladder (t_concurrency_headroom, 0.1.105)
 
 Every Lambda in the account — the connector, its authorizers, the auth Lambda and **every tenant app
