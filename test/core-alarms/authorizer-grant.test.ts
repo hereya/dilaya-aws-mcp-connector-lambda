@@ -28,12 +28,15 @@ describe("frontend authorizer table grant", () => {
       JSON.stringify(s.Condition ?? "").includes("reqcount#")
     );
     expect(st.Action).toBe("dynamodb:UpdateItem");
-    // Three counter families, and nothing else on this table: the per-app
-    // monthly count, the per-IP-per-minute rate guard, and the per-ORG monthly
-    // count the plan's request cap is enforced against.
+    // Five counter families, and nothing else on this table: the per-app
+    // monthly count, the per-IP-per-minute rate guard, its long-window twin,
+    // the per-ORG monthly count the plan's request cap is enforced against,
+    // and the login tree's minute brake (missing in 0.1.104 — the brake
+    // counted nothing for a day; test/app-state-leading-keys.test.ts now
+    // derives this list from the handler's own pk builders).
     expect(
       st.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"]
-    ).toEqual(["reqcount#*", "ratecount#*", "ratewin#*", "reqcountorg#*"]);
+    ).toEqual(["reqcount#*", "ratecount#*", "ratewin#*", "reqcountorg#*", "rateauth#*"]);
   });
 
   // grantReadWriteData would have been one word shorter and would have put the
