@@ -68,6 +68,8 @@ org, 2 past its monthly allowance), and since 0.1.73 **`auth: 1`** — *the plat
 (t_frontend_auth_default): a request with no session cookie (`dilaya_id_token` / `hereya_id_token` /
 `dilaya_agent`) is answered at the edge with a 302 to `/auth/login?return_url=<path>` (`/api/*`: 401
 JSON), except `/auth/*`, `/static/*` and the app's **`pub`** prefixes (`"/"` = the root page only).
+Before the gate, on every site, a cookie-less dot-path (0.1.100) or server-side script path (0.1.107,
+`.php`/`.asp`/`.jsp`/`.cgi`…) is answered `404 no-store` at the edge — no redirect, no Lambda.
 That is a presence check (no crypto at the edge) — the UX, and the only thing that can protect a
 STATIC section (S3 never reaches an authorizer). The guard is the **frontend authorizer**: for an app
 whose registry row carries `authEnforce: true` it REFUSES (403) an anonymous request for any site path
@@ -229,6 +231,20 @@ counted **nothing** for its first day (228 `auth rate check failed` lines in 24 
 impact). The grant now names five families, and `test/app-state-leading-keys.test.ts` reads the
 handler's pk builders and the synthesized policy side by side — a counter family can no longer leave
 before its IAM.
+
+**0.1.107 — the cache cannot absorb a scanner; the edge answers it (t_scanner_ext_404, 2026-10-12).**
+The `RateGuardAlarm` fired for real for the first time at 12:14Z: an Azure address probed **282 PHP
+paths** on a closed site in 3 min (`/wp-cron.php`, `/xmlrpc.php`, `/.well-known/wp-login.php`…). The
+gate turned each one into `302 /auth/login?return_url=<that path>`, and since the query string is
+part of the login page's cache key, the 60 s cache served **4 of 207** — the other 203 ran the auth
+Lambda until the 60/min brake refused the rest (74 × 403; concurrency stayed at 1, no customer
+impact). The brake bounds the damage at 60 Lambda runs per (address, app, minute); it does not remove
+it. So the dot-path rule of 0.1.99/0.1.100 now has a sibling in `router-login-gate.ts`: a cookie-less
+request whose path ends in a **server-side script extension** (`.php`/`.phpN`/`.phtml`/`.asp`/
+`.aspx`/`.jsp`/`.jspx`/`.cgi`/`.pl`/`.cfm`, any case, `/.well-known/` included this time) gets
+the same bare `404 no-store` at the edge, on every site — no redirect, no Lambda. A site is served by a
+JS handler; 14 days of edge logs (172 677 requests, 61 000 of them on such paths) hold not one answered
+200. A signed-in visitor is untouched. Pinned by `test/apphost-router-behavior/login-gate.test.ts`.
 
 ## Concurrency headroom and the scaling ladder (t_concurrency_headroom, 0.1.105)
 

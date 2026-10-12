@@ -121,6 +121,36 @@ describe("apphost router — login gate", () => {
     expect((await handler(withCookie(HOST, "/.env"))).uri).toBe(`/o/${ORG}/shop/site/.env`);
   });
 
+  // t_scanner_ext_404 (RateGuardAlarm, 2026-10-12 12:14Z — its first real firing): a
+  // scanner probed 282 PHP paths on a closed site in 3 min. Each one was
+  // redirected to /auth/login?return_url=<that path>, and since the query string
+  // is part of the login page's cache key, the 60 s edge cache absorbed NONE of
+  // them (203 misses / 4 hits): every probe ran the auth Lambda until the 60/min
+  // brake refused the rest. No Dilaya site serves a server-side script path
+  // (14 days of edge logs: not one 200), so the gate answers 404 itself.
+  it("answers a cookie-less server-script path (.php, .asp, .jsp, .cgi…) with a bare 404, on every site", async () => {
+    const probes = ["/wp-cron.php", "/admin.php7", "/.well-known/wp-login.php", "/wp-includes/images/about.PhP",
+      "/x/y.aspx", "/old.asp", "/app.jsp", "/cgi-bin/test.cgi", "/old.pl", "/index.cfm", "/view.phtml"];
+    for (const site of [entry({ pub: ["/"] }), { [HOST]: JSON.stringify({ o: ORG, a: "shop" }) }]) {
+      const { handler, cf } = makeHandler(site);
+      for (const uri of probes) {
+        const out = await handler(req(HOST, uri));
+        expect([uri, out.statusCode]).toEqual([uri, 404]);
+        expect(out.headers.location).toBeUndefined();
+        expect(out.headers["cache-control"].value).toBe("no-store");
+      }
+      expect(cf.lastOrigin).toBeUndefined();
+    }
+  });
+
+  it("keeps the login redirect for ordinary paths, and lets a signed-in .php reach the app", async () => {
+    const { handler } = makeHandler(entry());
+    for (const uri of ["/orders/42", "/report.pdf", "/php/guide", "/phpinfo", "/notes.php.bak", "/v1.2/notes"]) {
+      expect([uri, (await handler(req(HOST, uri))).statusCode]).toEqual([uri, 302]);
+    }
+    expect((await handler(withCookie(HOST, "/wp-cron.php"))).uri).toBe(`/o/${ORG}/shop/site/wp-cron.php`);
+  });
+
   it("a stopped site stops BEFORE it asks anyone to log in", async () => {
     const { handler } = makeHandler(entry({ x: 1 }));
     expect((await handler(req(HOST, "/"))).statusCode).toBe(503);
