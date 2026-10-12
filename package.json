@@ -14,14 +14,14 @@
     "@aws-sdk/client-route-53-domains": "^3.1127.0",
     "@types/jest": "^30",
     "@types/node": "^24.10.1",
-    "aws-cdk": "2.1129.0",
+    "aws-cdk": "2.1145.0",
     "jest": "^30",
     "ts-jest": "^29",
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.232.2",
+    "aws-cdk-lib": "^2.273.0",
     "constructs": "^10.0.0"
   }
 }
