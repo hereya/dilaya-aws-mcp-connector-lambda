@@ -21,16 +21,35 @@ const withCookie = (host: string, uri: string, name = "dilaya_id_token") => {
 };
 
 describe("apphost router — login gate", () => {
-  it("sends a cookie-less visitor of an enforced site to /auth/login, keeping where they were", async () => {
+  // Where they were rides in the FRAGMENT, never the query (t_login_return_fragment,
+  // 0.1.108): four real RateGuardAlarm firings in 23 h (12-13/10) were scanners
+  // probing generic paths (/dashboard, /form/, /values.yaml…) that no edge rule
+  // can tell from a page; each ?return_url= was its own cache key, so the login
+  // page's 60 s cache absorbed none (up to 174 renders a minute, 32 of the auth
+  // Lambda's 50 slots). A fragment never reaches the server nor the cache: the
+  // anonymous login page becomes ONE entry per site, and N probes cost ONE render.
+  it("sends a cookie-less visitor of an enforced site to /auth/login, keeping where they were in the fragment", async () => {
     const { handler, cf } = makeHandler(entry());
     const r = req(HOST, "/orders/42") as any;
     r.request.querystring = { tab: { value: "open" } };
     const out = await handler(r);
     expect(out.statusCode).toBe(302);
-    expect(out.headers.location.value).toBe("/auth/login?return_url=" + encodeURIComponent("/orders/42?tab=open"));
+    expect(out.headers.location.value).toBe("/auth/login#r=" + encodeURIComponent("/orders/42?tab=open"));
+    expect(out.headers.location.value).not.toContain("?");
     expect(out.headers["cache-control"].value).toBe("no-store");
     expect(out.uri).toBeUndefined();
     expect(cf.lastOrigin).toBeUndefined();
+  });
+
+  it("every gated path of a site redirects to the SAME login URL before the fragment — one cache key", async () => {
+    const { handler } = makeHandler(entry());
+    const targets = new Set<string>();
+    for (const uri of ["/dashboard", "/form/", "/wrangler.toml", "/values.yaml", "/var/run/secrets/k8s/token"]) {
+      const out = await handler(req(HOST, uri));
+      expect(out.statusCode).toBe(302);
+      targets.add(out.headers.location.value.split("#")[0]);
+    }
+    expect([...targets]).toEqual(["/auth/login"]);
   });
 
   it("answers /api/* with 401 JSON instead — an XHR has nowhere to be redirected to", async () => {
