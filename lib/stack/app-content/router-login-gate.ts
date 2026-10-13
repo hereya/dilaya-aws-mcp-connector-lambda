@@ -22,6 +22,17 @@
 //    string) absorbed none of them and every probe ran the auth Lambda until
 //    the 60/min brake refused the rest. Sites are served by JS handlers: 14 days
 //    of edge logs (172 677 requests, 61 000 on such paths) hold not one answered 200.
+// The return path rides in the FRAGMENT (/auth/login#r=<path>), never the
+// query — t_login_return_fragment: four real RateGuardAlarm firings in 23 h
+// (12-13/10) had the same shape, a scanner probing hundreds of generic paths
+// (/dashboard, /form/, /wrangler.toml, /values.yaml…) that no edge rule can
+// tell from a real page; each 302 carried a distinct ?return_url, so each
+// was a distinct cache key and the login page's 60 s cache absorbed none —
+// up to 174 origin renders a minute, 32 of the auth Lambda's 50 shared slots.
+// A fragment never reaches the server nor the cache: the anonymous login
+// page is ONE entry per (host, language, cookies) and a scanner on N paths
+// costs ONE render a minute. The page's script copies #r= into the hidden
+// return_url field; safeReturnUrl still validates it at the POST.
 //
 // This is a PRESENCE check — a CloudFront Function has no crypto — so it is
 // the UX and the saving (no Lambda for an anonymous hit), never the guard:
@@ -60,7 +71,7 @@ export const LOGIN_GATE_BRANCH = `  var ck = request.cookies || {};
         statusCode: 302,
         statusDescription: 'Found',
         headers: {
-          'location': { value: '/auth/login?return_url=' + encodeURIComponent(uri + qsOf(request)) },
+          'location': { value: '/auth/login#r=' + encodeURIComponent(uri + qsOf(request)) },
           'cache-control': { value: 'no-store' }
         }
       };

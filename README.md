@@ -246,6 +246,25 @@ the same bare `404 no-store` at the edge, on every site — no redirect, no Lamb
 JS handler; 14 days of edge logs (172 677 requests, 61 000 of them on such paths) hold not one answered
 200. A signed-in visitor is untouched. Pinned by `test/apphost-router-behavior/login-gate.test.ts`.
 
+**0.1.108 — the return path rides in the fragment, so the login page has ONE cache key per site
+(t_login_return_fragment, 2026-10-13).** Four real `RateGuardAlarm` firings in 23 h (12:14Z,
+22:12Z, 03:53Z, 10:47Z — three sites, three addresses) had the same shape as 0.1.107's, on paths no
+edge rule can close: `/dashboard`, `/form/`, `/webhook-test/`, `/wrangler.toml`, `/values.yaml`,
+`/var/run/secrets/…/token` — generic names that could be a real page. Each one became
+`302 /auth/login?return_url=<that path>`, each a distinct cache key, so the 60 s cache absorbed none:
+up to **174 origin renders a minute** and **32 of the auth Lambda's 50 shared slots** held by one
+scanner (a second one at the same time would have refused every site's login). The root cause is the
+cache key, not the list of paths: the gate now redirects to **`/auth/login#r=<path>`**. A fragment is
+never sent to the server nor to the CDN, so the anonymous login page is one entry per (host,
+language, cookies) and N probes cost ONE render a minute. The page carries a four-line script that
+copies `#r=` into the hidden `return_url` field the OTP form, the passkey leg and the server's
+`safeReturnUrl` already read — nothing changes at the POST, the anti-open-redirect check is the same.
+The other `?return_url=` emitters (the OTP page's back link, `passkey/register`) keep the query: they
+come after a POST or with a cookie, outside the cache anyway. Without JavaScript the field stays
+empty and the visitor lands on the site root after signing in (the OTP form itself needs no script).
+Pinned by `test/apphost-router-behavior/login-gate.test.ts` (one login URL for every gated path) and
+`test/auth-login-return-fragment.test.ts` (the script, run against a fake DOM).
+
 ## Concurrency headroom and the scaling ladder (t_concurrency_headroom, 0.1.105)
 
 Every Lambda in the account — the connector, its authorizers, the auth Lambda and **every tenant app
