@@ -34,6 +34,14 @@
 // costs ONE render a minute. The page's script copies #r= into the hidden
 // return_url field; safeReturnUrl still validates it at the POST.
 //
+// Both 404 rules run on a DECODED copy of the path (t_edge_404_percent_bypass,
+// 0.1.109): they tested request.uri as sent, so /%2Eenv showed the regex no
+// "." and earned a login redirect (one render each) while the origin decodes
+// and serves the same path — a scanner did exactly that on 13/10. Two passes,
+// as deep as the origin chain decodes (API Gateway, then the app); pair by
+// pair, so a malformed escape elsewhere cannot switch the decoding off; and
+// only for these tests — routing keeps request.uri untouched.
+//
 // This is a PRESENCE check — a CloudFront Function has no crypto — so it is
 // the UX and the saving (no Lambda for an anonymous hit), never the guard:
 // the frontend authorizer at the origin verifies the cookie and refuses
@@ -43,7 +51,9 @@
 // for an honest browser.
 export const LOGIN_GATE_BRANCH = `  var ck = request.cookies || {};
   var anon = !ck['dilaya_id_token'] && !ck['hereya_id_token'] && !ck['dilaya_agent'];
-  if (anon && (/\\/\\.(?!well-known(\\/|$))/.test(uri) || /\\.(php\\d?|phtml|aspx?|jspx?|cgi|pl|cfm)$/i.test(uri))) {
+  var du = uri;
+  for (var d = 0; d < 2; d++) du = du.replace(/%[0-9a-fA-F]{2}/g, function (m) { try { return decodeURIComponent(m); } catch (x) { return m; } });
+  if (anon && (/\\/\\.(?!well-known(\\/|$))/.test(du) || /\\.(php\\d?|phtml|aspx?|jspx?|cgi|pl|cfm)$/i.test(du))) {
     return { statusCode: 404, statusDescription: 'Not Found', headers: { 'cache-control': { value: 'no-store' } } };
   }
   if (e.auth && uri !== '/auth' && uri.indexOf('/auth/') !== 0

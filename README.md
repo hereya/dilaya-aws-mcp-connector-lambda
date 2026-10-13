@@ -69,7 +69,8 @@ org, 2 past its monthly allowance), and since 0.1.73 **`auth: 1`** — *the plat
 `dilaya_agent`) is answered at the edge with a 302 to `/auth/login?return_url=<path>` (`/api/*`: 401
 JSON), except `/auth/*`, `/static/*` and the app's **`pub`** prefixes (`"/"` = the root page only).
 Before the gate, on every site, a cookie-less dot-path (0.1.100) or server-side script path (0.1.107,
-`.php`/`.asp`/`.jsp`/`.cgi`…) is answered `404 no-store` at the edge — no redirect, no Lambda.
+`.php`/`.asp`/`.jsp`/`.cgi`…) is answered `404 no-store` at the edge — no redirect, no Lambda;
+since 0.1.109 both rules test the path DECODED (two passes), so `/%2Eenv` meets the same 404 as `/.env`.
 That is a presence check (no crypto at the edge) — the UX, and the only thing that can protect a
 STATIC section (S3 never reaches an authorizer). The guard is the **frontend authorizer**: for an app
 whose registry row carries `authEnforce: true` it REFUSES (403) an anonymous request for any site path
