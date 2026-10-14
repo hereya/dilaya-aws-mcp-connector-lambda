@@ -7,7 +7,7 @@ import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { StackContext } from "./context";
 import { CLOUDFRONT_FUNCTION_MAX_BYTES } from "./app-content/router-stop-pages";
-import { TRANSFER_PATH, transferFunctionCode } from "./files-transfer/page";
+import { TRANSFER_MATERIAL_PATH, TRANSFER_PATH, transferFunctionCode } from "./files-transfer/page";
 
 /**
  * Presigned file URLs on a Dilaya host (t_files_own_domain, 2026-09-12).
@@ -57,6 +57,15 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
   const bucket = s3.Bucket.fromBucketName(stack, "FilesBucket", bucketName);
   const origin = origins.S3BucketOrigin.withBucketDefaults(bucket);
   const transferFn = createTransferPageFunction(stack);
+  // The connector's HTTP API, as a SECOND origin, for exactly one path: the
+  // short transfer link's material lookup (t_transfer_short_link). The page
+  // POSTs the link's id to /_t on its OWN origin — no CORS, and the id rides in
+  // the body, so neither this distribution's log nor the API's holds it. Same
+  // execute-api origin shape as the frontend distribution.
+  const apiOrigin = new origins.HttpOrigin(
+    cdk.Fn.select(2, cdk.Fn.split("/", ctx.httpApi.apiEndpoint)),
+    { protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY }
+  );
   const distribution = new cloudfront.Distribution(stack, "FilesDistribution", {
     comment: "Presigned file URLs on a Dilaya host (pass-through to S3)",
     certificate: acm.Certificate.fromCertificateArn(
@@ -86,6 +95,16 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
         functionAssociations: [
           { function: transferFn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
         ],
+      },
+      // POST /_t → the connector (public route, no authorizer: the 128-bit id
+      // IS the secret). Uncached; every viewer header but Host forwarded.
+      [TRANSFER_MATERIAL_PATH]: {
+        origin: apiOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy:
+          cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
     },
   });

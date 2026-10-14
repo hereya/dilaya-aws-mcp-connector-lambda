@@ -3,6 +3,7 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import type { StackContext } from "./context";
 import { OPENAI_APPS_CHALLENGE_PATH } from "./openai-challenge";
+import { TRANSFER_MATERIAL_PATH } from "./files-transfer/page";
 
 export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
   const { httpApi, httpAuthorizer, lambdaIntegration, mcpHostAuthorizer, prmLambda } = ctx;
@@ -25,6 +26,18 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
       "OpenAiChallengeIntegration",
       prmLambda
     ),
+  });
+
+  // The transfer page's material lookup (t_transfer_short_link): the files
+  // distribution proxies POST /_t here (files-domain.ts); the connector
+  // (src/transfer-handler.ts) answers the signed material a short link points
+  // at. NO authorizer — the id in the body is the secret, and it is only ever
+  // sent by the page, on the files origin. Lives on the API itself too, which
+  // is harmless: the same 128-bit guess is needed either way.
+  httpApi.addRoutes({
+    path: TRANSFER_MATERIAL_PATH,
+    methods: [apigwv2.HttpMethod.POST],
+    integration: lambdaIntegration,
   });
 
   // MCP route (existing)

@@ -7,6 +7,9 @@ import { PAGE_SCRIPT } from "./page-script";
 // shares an origin with every presigned file URL.
 
 export const TRANSFER_PATH = "/_transfer";
+/** Where the page fetches a short link's signed material (POST, id in the
+ *  body): proxied by the files distribution to the connector's public route. */
+export const TRANSFER_MATERIAL_PATH = "/_t";
 
 const STYLE =
   "body{font:16px/1.6 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;" +
