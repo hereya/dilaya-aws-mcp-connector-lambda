@@ -3,10 +3,20 @@
 // — the SAME origin as the presigned file URLs, so the upload POST and the
 // download link never leave the first-party host, and no Lambda ever sees a byte.
 //
-// The link's FRAGMENT carries everything (base64url JSON, written by the
-// connector's src/storage/transfer-link.ts — keep the two in step):
-//   upload   {v:1, op:"upload", path, exp, max, type, overwrite, fields}
-//   download {v:1, op:"download", path, exp, url}
+// The link's FRAGMENT is one of two things (written by the connector's
+// src/storage/transfer-link.ts — keep the two in step):
+//   - a SHORT id (base64url, ≤ 40 chars, t_transfer_short_link): the page POSTs
+//     it in the BODY to /_t on its own origin (the files distribution proxies
+//     that one path to the connector), which answers the signed material below.
+//     The id never sits in a URL path or query, so no access log ever holds it;
+//     a 404 means the link expired (the row's TTL is the link's expiry).
+//   - the legacy base64url JSON of that same material, inline (links minted
+//     before the short form; honoured until they expire):
+//       upload   {v:1, op:"upload", path, exp, max, type, overwrite, fields}
+//       download {v:1, op:"download", path, exp, url}
+// Why short: a 2 900-character link relayed by an assistant gets RETYPED, not
+// copied — 14/10/2026, a session token lost 9 of its 1 228 characters and S3's
+// InvalidToken XML was saved as "1.zip". ~60 characters survive a model.
 // A fragment never reaches a server, so opening or previewing the link neither
 // logs the signature nor consumes anything; the upload only starts on a click.
 //
@@ -20,18 +30,17 @@ var T=fr?{bad:"Lien invalide ou incomplet. Demandez un nouveau lien \\u00e0 l\\u
 up:"D\\u00e9poser un fichier",dest:"Destination : ",max:"Taille maximale : ",ow1:"Un fichier existant \\u00e0 cet emplacement sera remplac\\u00e9.",ow0:"Le fichier ne doit pas d\\u00e9j\\u00e0 exister.",
 send:"Envoyer",big:"Fichier trop volumineux.",empty:"Fichier vide.",sending:"Envoi\\u2026 ",ok:"Fichier re\\u00e7u. Retournez \\u00e0 la conversation : l\\u2019assistant peut v\\u00e9rifier la r\\u00e9ception.",
 net:"Erreur r\\u00e9seau. V\\u00e9rifiez la connexion puis r\\u00e9essayez.",denied:"Refus\\u00e9 : lien expir\\u00e9 ou invalide.",fail:"\\u00c9chec de l\\u2019envoi",retry:"R\\u00e9essayer",
-dl:"T\\u00e9l\\u00e9charger le fichier",dlh:"Ensuite, joignez le fichier \\u00e0 la conversation si l\\u2019assistant en a besoin.",until:"Lien valable jusqu\\u2019\\u00e0 ",type:"Type attendu : "}
+dl:"T\\u00e9l\\u00e9charger le fichier",dlh:"Ensuite, joignez le fichier \\u00e0 la conversation si l\\u2019assistant en a besoin.",until:"Lien valable jusqu\\u2019\\u00e0 ",type:"Type attendu : ",wait:"Chargement\\u2026"}
 :{bad:"Invalid or incomplete link. Ask the assistant for a new one.",exp:"This link has expired. Ask the assistant for a new one.",
 up:"Upload a file",dest:"Destination: ",max:"Maximum size: ",ow1:"A file already at this location will be replaced.",ow0:"The file must not already exist.",
 send:"Upload",big:"File too large.",empty:"Empty file.",sending:"Uploading\\u2026 ",ok:"File received. Go back to the conversation: the assistant can verify it arrived.",
 net:"Network error. Check the connection and try again.",denied:"Refused: link expired or invalid.",fail:"Upload failed",retry:"Try again",
-dl:"Download the file",dlh:"Then attach the file to the conversation if the assistant needs it.",until:"Link valid until ",type:"Expected type: "};
+dl:"Download the file",dlh:"Then attach the file to the conversation if the assistant needs it.",until:"Link valid until ",type:"Expected type: ",wait:"Loading\\u2026"};
 var m=document.getElementById("m");
 function el(t,x,c){var e=document.createElement(t);if(x)e.textContent=x;if(c)e.className=c;m.appendChild(e);return e}
-function stop(x){el("p",x,"err")}
+function stop(x){m.textContent="";el("p",x,"err")}
 function size(n){var u=["B","KB","MB","GB"],i=0;while(n>=1024&&i<3){n/=1024;i++}return(i?n.toFixed(1):n)+" "+u[i]}
-var d;try{var h=location.hash.slice(1).replace(/-/g,"+").replace(/_/g,"/");
-d=JSON.parse(decodeURIComponent(escape(atob(h))))}catch(e){return stop(T.bad)}
+function show(d){m.textContent="";
 if(!d||d.v!==1||typeof d.path!=="string"||typeof d.exp!=="number")return stop(T.bad);
 if(Date.now()>d.exp)return stop(T.exp);
 var name=d.path.split("/").pop();
@@ -56,5 +65,15 @@ q.onload=function(){if(q.status===201||q.status===204||q.status===200){g.value=1
 var c=(/<Code>([^<]+)<\\/Code>/.exec(q.responseText||"")||[])[1]||String(q.status);
 s.textContent=c==="EntityTooLarge"?T.big:c==="AccessDenied"?T.denied:T.fail+" ("+c+").";s.className="st err";again()};
 q.onerror=function(){s.textContent=T.net;s.className="st err";again()};q.send(fd)};
-function again(){g.hidden=true;f.disabled=false;b.disabled=false;b.textContent=T.retry}
+function again(){g.hidden=true;f.disabled=false;b.disabled=false;b.textContent=T.retry}}
+var h=location.hash.slice(1);
+if(h.length<=40){
+if(!/^[A-Za-z0-9_-]{16,40}$/.test(h))return stop(T.bad);
+el("p",T.wait,"muted");
+fetch("/_t",{method:"POST",headers:{"content-type":"text/plain"},body:h}).then(function(r){
+if(r.status===404)throw"exp";if(!r.ok)throw"net";return r.json()}).then(show,function(e){stop(e==="exp"?T.exp:T.net)});
+return}
+var d;try{var b=h.replace(/-/g,"+").replace(/_/g,"/");
+d=JSON.parse(decodeURIComponent(escape(atob(b))))}catch(e){return stop(T.bad)}
+show(d);
 })();`;

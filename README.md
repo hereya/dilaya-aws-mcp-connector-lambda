@@ -103,11 +103,15 @@ golden templates are byte-identical with the feature off.
 behavior, `/_transfer*` (GET/HEAD, uncached), whose viewer-request CloudFront Function answers a
 self-contained page itself — the bucket is never asked for that path, and no object key can collide
 (every key starts with the storage prefix). When a sandbox blocks the connector's programmatic
-transfer, the connector hands a person `https://<filesDomain>/_transfer#<payload>`: they upload
+transfer, the connector hands a person `https://<filesDomain>/_transfer#<id>`: they upload
 (presigned **POST** to `/` — the policy enforces key, size range, Content-Type and a transfer id) or
 download (presigned GET as attachment) from their own browser, on the SAME origin as the presigned
-URLs, so no CORS and no Lambda in the byte path. The payload lives in the fragment, which never
-reaches a server. The page's script and style are pinned by hash in its CSP; a download target that
+URLs, so no CORS and no Lambda in the byte path. The fragment is a SHORT id (0.1.111,
+t_transfer_short_link — a 2 900-character inline payload got retyped by an assistant and lost 9
+characters of its session token): the page POSTs it in the body to `/_t` on its own origin, a second
+behavior this distribution proxies to the connector's HTTP API (public route `POST /_t`, the id being
+the secret), and receives the signed material; the legacy inline-JSON fragment is still honoured. The
+page's script and style are pinned by hash in its CSP; a download target that
 is not a same-origin path is refused. Source: `lib/stack/files-transfer/` (the payload contract is
 shared with the connector's `src/storage/transfer-link.ts`); `test/files-domain/transfer-page.test.ts`
 executes the synthesised function. Proven 16/09 from headless Chrome against the live distribution

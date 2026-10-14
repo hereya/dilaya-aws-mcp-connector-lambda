@@ -39,15 +39,38 @@ describe("files transfer page", () => {
 
   it("is bound to /_transfer* on the files distribution, viewer-request, uncached, GET/HEAD only", () => {
     const behaviors = config.CacheBehaviors as any[];
-    expect(behaviors).toHaveLength(1);
-    const b = behaviors[0];
-    expect(b.PathPattern).toBe("/_transfer*");
+    expect(behaviors).toHaveLength(2);
+    const b = behaviors.find((x) => x.PathPattern === "/_transfer*");
     expect(b.AllowedMethods).toEqual(["GET", "HEAD"]);
     expect(b.CachePolicyId).toBe(CACHING_DISABLED);
     expect(b.FunctionAssociations).toHaveLength(1);
     expect(b.FunctionAssociations[0].EventType).toBe("viewer-request");
-    // Still ONE origin: the page adds no path to the bucket.
-    expect(config.Origins).toHaveLength(1);
+    // The page itself still adds no path to the bucket: it answers from the edge.
+    expect(b.TargetOriginId).toBe(config.DefaultCacheBehavior.TargetOriginId);
+  });
+
+  // t_transfer_short_link: the short link's id is resolved on the page's OWN
+  // origin, so the distribution carries ONE more behavior, POST-capable and
+  // uncached, to a SECOND origin — the connector's HTTP API.
+  it("proxies exactly /_t to the connector API: a second origin, POST allowed, uncached, no function", () => {
+    const b = (config.CacheBehaviors as any[]).find((x) => x.PathPattern === "/_t");
+    expect(b).toBeDefined();
+    expect(b.AllowedMethods).toContain("POST");
+    expect(b.CachePolicyId).toBe(CACHING_DISABLED);
+    expect(b.ViewerProtocolPolicy).toBe("https-only");
+    expect(b.FunctionAssociations).toBeUndefined();
+    expect(b.TargetOriginId).not.toBe(config.DefaultCacheBehavior.TargetOriginId);
+    expect(config.Origins).toHaveLength(2);
+    const api = (config.Origins as any[]).find((o) => o.Id === b.TargetOriginId);
+    // The execute-api host, read off the HTTP API's endpoint (Fn::Select 2 of the split URL).
+    expect(JSON.stringify(api.DomainName)).toContain("Fn::Select");
+    expect(JSON.stringify(api.DomainName)).toContain("ApiEndpoint");
+    expect(api.CustomOriginConfig.OriginProtocolPolicy).toBe("https-only");
+  });
+
+  it("exposes POST /_t on the HTTP API with NO authorizer", () => {
+    const { t } = synthesised();
+    t.hasResourceProperties("AWS::ApiGatewayV2::Route", { RouteKey: "POST /_t", AuthorizationType: "NONE" });
   });
 
   it.each(["/_transfer", "/_transfer/"])("answers the page itself on %s", (uri) => {
@@ -82,6 +105,54 @@ describe("files transfer page", () => {
     const script = /<script>([\s\S]*)<\/script>/.exec(run(code, "/_transfer").body)![1];
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     expect(() => new Function(script)).not.toThrow();
+  });
+
+  // The script, RUN against a minimal DOM: the two fragment forms take the two
+  // paths — a short id is POSTed in the BODY to /_t (never in the URL), the
+  // legacy inline JSON renders without any request at all.
+  function runPage(hash: string) {
+    const script = /<script>([\s\S]*)<\/script>/.exec(run(code, "/_transfer").body)![1];
+    const calls: any[] = [];
+    const nodes: any[] = [];
+    const main = { textContent: "", appendChild: (n: any) => nodes.push(n) };
+    const document = {
+      getElementById: () => main,
+      createElement: (tag: string) => ({ tag, setAttribute(k: string, v: string) { (this as any)[k] = v; } }),
+    };
+    const fetch = (url: string, init: any) => {
+      calls.push({ url, init });
+      return new Promise(() => {});
+    };
+    const sandbox = { document, location: { hash: "#" + hash }, navigator: { language: "fr" }, fetch,
+      atob: (b: string) => Buffer.from(b, "base64").toString("binary"), escape: globalThis.escape,
+      decodeURIComponent, FormData: class {}, XMLHttpRequest: class {}, Date };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(...Object.keys(sandbox), script)(...Object.values(sandbox));
+    return { calls, nodes };
+  }
+
+  it("a SHORT fragment is sent in the body of a POST to /_t — never in a path or query", () => {
+    const { calls, nodes } = runPage("AbCdEfGhIjKlMnOpQrStUv");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("/_t");
+    expect(calls[0].init.method).toBe("POST");
+    expect(calls[0].init.body).toBe("AbCdEfGhIjKlMnOpQrStUv");
+    expect(nodes.map((n) => n.textContent)).toContain("Chargement…");
+  });
+
+  it("a short fragment that is not an id is refused without any request", () => {
+    const { calls, nodes } = runPage("not an id!");
+    expect(calls).toHaveLength(0);
+    expect(nodes[0].className).toBe("err");
+  });
+
+  it("a legacy inline JSON fragment still renders the download button, with no request", () => {
+    const payload = { v: 1, op: "download", path: "rapports/a.pdf", exp: Date.now() + 60_000, url: "/p-x/org/rapports/a.pdf?X-Amz-Signature=1" };
+    const { calls, nodes } = runPage(Buffer.from(JSON.stringify(payload)).toString("base64url"));
+    expect(calls).toHaveLength(0);
+    const a = nodes.find((n) => n.tag === "a");
+    expect(a.href).toBe(payload.url);
+    expect(a.download).toBe("a.pdf");
   });
 });
 

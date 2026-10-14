@@ -34,8 +34,10 @@ describe("files domain (filesDomain set)", () => {
   });
 
   it("relays to the file bucket's REGIONAL endpoint — the host the connector presigns for", () => {
-    expect(config.Origins).toHaveLength(1);
-    expect(JSON.stringify(config.Origins[0].DomainName)).toContain(`${BUCKET}.s3.eu-west-1.`);
+    // The bucket is the DEFAULT behavior's origin; /_t (t_transfer_short_link)
+    // adds the connector API as a second one, asserted in transfer-page.test.ts.
+    const bucketOrigin = (config.Origins as any[]).find((o) => o.Id === config.DefaultCacheBehavior.TargetOriginId);
+    expect(JSON.stringify(bucketOrigin.DomainName)).toContain(`${BUCKET}.s3.eu-west-1.`);
   });
 
   it("carries no OAC/OAI and no bucket policy: the signature in the query string authorizes", () => {
