@@ -41,6 +41,15 @@
 // as deep as the origin chain decodes (API Gateway, then the app); pair by
 // pair, so a malformed escape elsewhere cannot switch the decoding off; and
 // only for these tests — routing keeps request.uri untouched.
+// The QUERY form is folded into the fragment at the edge too (t_login_query_to_fragment,
+// 0.1.110): the fragment above only covers the 302s the platform issues, and a
+// site closed by its OWN code (rap-connect, the legacy enforce:false contract)
+// kept redirecting to /auth/login?return_url=<path> — 48 of its 50 login renders
+// after 0.1.108 still carried the query, 11 auth-Lambda runs in one minute on
+// 14/10 05:47Z. An anonymous GET/HEAD of /auth/login with return_url is answered
+// 302 to /auth/login#r=<path> (other params kept — the OTP back link carries
+// ?email=), path filtered to a relative one as safeReturnUrl would, else bare.
+// A visitor with a cookie, or a POST, passes untouched (the auth Lambda's job).
 //
 // This is a PRESENCE check — a CloudFront Function has no crypto — so it is
 // the UX and the saving (no Lambda for an anonymous hit), never the guard:
@@ -55,6 +64,21 @@ export const LOGIN_GATE_BRANCH = `  var ck = request.cookies || {};
   for (var d = 0; d < 2; d++) du = du.replace(/%[0-9a-fA-F]{2}/g, function (m) { try { return decodeURIComponent(m); } catch (x) { return m; } });
   if (anon && (/\\/\\.(?!well-known(\\/|$))/.test(du) || /\\.(php\\d?|phtml|aspx?|jspx?|cgi|pl|cfm)$/i.test(du))) {
     return { statusCode: 404, statusDescription: 'Not Found', headers: { 'cache-control': { value: 'no-store' } } };
+  }
+  var mth = request.method;
+  if (anon && uri === '/auth/login' && request.querystring.return_url && (mth === 'GET' || mth === 'HEAD')) {
+    var rp = '';
+    try { rp = decodeURIComponent(request.querystring.return_url.value); } catch (x) { rp = ''; }
+    if (rp.length > 2048 || rp.charAt(0) !== '/' || rp.charAt(1) === '/' || rp.indexOf('\\\\') >= 0) rp = '';
+    delete request.querystring.return_url;
+    return {
+      statusCode: 302,
+      statusDescription: 'Found',
+      headers: {
+        'location': { value: '/auth/login' + qsOf(request) + (rp ? '#r=' + encodeURIComponent(rp) : '') },
+        'cache-control': { value: 'no-store' }
+      }
+    };
   }
   if (e.auth && uri !== '/auth' && uri.indexOf('/auth/') !== 0
       && uri !== '/static' && uri.indexOf('/static/') !== 0) {
