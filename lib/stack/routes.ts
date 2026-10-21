@@ -196,6 +196,11 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
     integration: lambdaIntegration,
   });
 
+  // Public app-USERS gateway (t_runtime_users_gateway): a backend adds or
+  // removes a sign-in user; the connector holds the Cognito grant the app
+  // role never had. Same DILAYA_CAPABILITY self-auth.
+  httpApi.addRoutes({ path: "/o/{orgId}/{app}/users/{proxy+}", methods: [apigwv2.HttpMethod.ANY], integration: lambdaIntegration });
+
   // Public org-events webhook (NO JWT authorizer). dilaya.eu (the connect
   // AS) POSTs here on each org modification to invalidate the connector's
   // org-info cache for that org. Self-authenticated in the connector: the
