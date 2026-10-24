@@ -37,7 +37,7 @@ export function createFrontendAuthorizer(stack: cdk.Stack, ctx: StackContext): v
       stack,
       "FrontendAuthorizerHandler",
       {
-        runtime: lambda.Runtime.NODEJS_22_X,
+        runtime: lambda.Runtime.NODEJS_24_X,
         handler: "index.handler",
         code: lambda.Code.fromAsset(
           path.join(LIB_DIR, "frontend-authorizer")

@@ -35,7 +35,7 @@ export function createAlarmRelay(stack: cdk.Stack, ctx: StackContext): void {
       displayName: "Dilaya connector alarms",
     });
     const alarmRelay = new lambda.Function(stack, "AlarmRelay", {
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       handler: "index.handler",
       code: lambda.Code.fromAsset(path.join(LIB_DIR, "alarm-relay")),
