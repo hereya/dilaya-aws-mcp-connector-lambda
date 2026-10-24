@@ -48,7 +48,7 @@ export function createOriginRestamp(stack: cdk.Stack, ctx: StackContext): void {
       stack,
       "ByodOriginRestamp",
       {
-        runtime: lambda.Runtime.NODEJS_22_X,
+        runtime: lambda.Runtime.NODEJS_24_X,
         handler: "index.handler",
         code: lambda.Code.fromAsset(
           path.join(LIB_DIR, "byod-origin-restamp")

@@ -12,7 +12,7 @@ export function createMcpAuthorizer(stack: cdk.Stack, ctx: StackContext): void {
   // -----------------------------------------------------------------------
 
   const authorizerFn = new lambda.Function(stack, "AuthorizerHandler", {
-    runtime: lambda.Runtime.NODEJS_22_X,
+    runtime: lambda.Runtime.NODEJS_24_X,
     handler: "index.handler",
     code: lambda.Code.fromAsset(path.join(LIB_DIR, "authorizer")),
     memorySize: 128,

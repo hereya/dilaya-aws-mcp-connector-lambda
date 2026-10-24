@@ -10,7 +10,7 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
   const { capSecretEntry, capSecretName, cognitoRegion, customDomain, fn, httpApi, memorySize, monitoredFunctions, plainEnv, policyEnv, timeout } = ctx;
   // Postmark server token from SSM `/dilaya/<orgId>/apps/<app>/auth/...`.
   const authLambdaFn = new lambda.Function(stack, "AuthLambdaHandler", {
-    runtime: lambda.Runtime.NODEJS_22_X,
+    runtime: lambda.Runtime.NODEJS_24_X,
     handler: "index.handler",
     code: lambda.Code.fromAsset(path.join(LIB_DIR, "auth-lambda")),
     memorySize: 128,

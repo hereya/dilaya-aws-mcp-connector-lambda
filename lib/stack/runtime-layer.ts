@@ -18,7 +18,9 @@ export function createRuntimeLayer(stack: cdk.Stack, ctx: StackContext): void {
   const runtimeLayer = fs.existsSync(layerDir)
     ? new lambda.LayerVersion(stack, "AppRuntimeLayer", {
         code: lambda.Code.fromAsset(layerDir),
-        compatibleRuntimes: [lambda.Runtime.NODEJS_22_X],
+        // 22 stays listed while per-app Lambdas move to 24 (t_lambda_node24): the layer-sync
+        // sweep switches each one, and a not-yet-swept function still matches.
+        compatibleRuntimes: [lambda.Runtime.NODEJS_22_X, lambda.Runtime.NODEJS_24_X],
         description: "Hereya runtime (db, storage) for per-app Lambdas",
       })
     : undefined;

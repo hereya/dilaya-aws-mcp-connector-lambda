@@ -16,7 +16,7 @@ export function createHandlerFunction(stack: cdk.Stack, ctx: StackContext): void
   }
 
   const fn = new lambda.Function(stack, "Handler", {
-    runtime: lambda.Runtime.NODEJS_22_X,
+    runtime: lambda.Runtime.NODEJS_24_X,
     handler: handlerName,
     code: lambda.Code.fromAsset(path.join(hereyaProjectRootDir, "dist")),
     memorySize,

@@ -38,7 +38,7 @@ export function createAppAuthTriggers(stack: cdk.Stack, ctx: StackContext): void
   const triggerEnv = { OTP_TABLE_NAME: otpTable.tableName };
   const makeTrigger = (id: string, dir: string) =>
     new lambda.Function(stack, id, {
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
       code: lambda.Code.fromAsset(
         path.join(LIB_DIR, "cognito-triggers", dir)

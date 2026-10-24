@@ -21,7 +21,7 @@ export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
     // -----------------------------------------------------------------------
 
     const prmLambda = new lambda.Function(stack, "PrmHandler", {
-      runtime: lambda.Runtime.NODEJS_22_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       handler: "index.handler",
       code: lambda.Code.fromInline(`
         exports.handler = async (event) => (event && event.rawPath === process.env.OPENAI_APPS_CHALLENGE_PATH) ? {
