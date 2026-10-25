@@ -13,7 +13,8 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
     runtime: lambda.Runtime.NODEJS_24_X,
     handler: "index.handler",
     code: lambda.Code.fromAsset(path.join(LIB_DIR, "auth-lambda")),
-    memorySize: 128,
+    // 256, not 128: avg 117 MB over 146 runs on nodejs24.x (memory-headroom.test.ts).
+    memorySize: 256,
     timeout: cdk.Duration.seconds(15),
     environment: {
       awsRegion: stack.region,

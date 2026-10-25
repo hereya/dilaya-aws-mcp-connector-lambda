@@ -40,7 +40,9 @@ export function createAlarmRelay(stack: cdk.Stack, ctx: StackContext): void {
       handler: "index.handler",
       code: lambda.Code.fromAsset(path.join(LIB_DIR, "alarm-relay")),
       timeout: cdk.Duration.seconds(30),
-      memorySize: 128,
+      // 256, not 128: 122 MB peak on nodejs24.x, and an OOM here drops the alert in
+      // silence (test/alarm-relay/memory-headroom.test.ts).
+      memorySize: 256,
       environment: {
         TELEGRAM_TOKEN_PARAM: alarmTelegramTokenParam,
         TELEGRAM_CHAT_ID: alarmTelegramChatId,
