@@ -43,7 +43,9 @@ export function createAppAuthTriggers(stack: cdk.Stack, ctx: StackContext): void
       code: lambda.Code.fromAsset(
         path.join(LIB_DIR, "cognito-triggers", dir)
       ),
-      memorySize: 128,
+      // 256, not 128: Verify/Create peaked at 105/101 MB on nodejs24.x — an OOM is a
+      // failed sign-in (test/alarm-relay/memory-headroom.test.ts).
+      memorySize: 256,
       timeout: cdk.Duration.seconds(10),
       environment: triggerEnv,
     });
