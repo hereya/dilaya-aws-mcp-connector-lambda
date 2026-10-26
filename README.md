@@ -545,8 +545,12 @@ absent, the template is byte-identical to 0.1.117** (golden a–e + the release.
   EMPTY = everyone home). Decodes the bearer's `org_ids` for ROUTING only (no signature check; the
   pod's authorizer and its own-region check still decide), reads ≤ 16 orgs, and swaps only the origin
   `domainName` (the secret header is inherited). `/o/<orgId>/…` routes on the path's org. It always
-  sets `x-dilaya-viewer-host` (the viewer's Host) and `x-dilaya-route` (`path`/`token`/`body`/`home`),
-  overwriting anything a viewer sent.
+  sets `x-dilaya-viewer-host` (the viewer's Host) and `x-dilaya-route` (`path`/`query`/`token`/`body`/`home`),
+  overwriting anything a viewer sent. **Bearer-less routes** (t_rca_p1_router step 4): a
+  `/mcp-connections/…` request with no `Authorization` routes on its `org` query (consent link,
+  channel-events push) or on the org prefix of its OAuth `state` (`<orgId>.<uuid>`, the callback);
+  dilaya.eu's `/org-events` assertion routes on its `org` claim. Telegram webhooks already carry
+  `/o/<orgId>/…`. `/_t` lives on the files distribution, not here.
 - **Lambda@Edge** (origin-request, body included) for `route=body` only — a bearer whose orgs sit in
   different regions: `params.arguments.org` of the JSON-RPC message (a batch must agree), routed only
   to a region the viewer function listed for that org; no org / unknown / > 1 MiB / truncated /
