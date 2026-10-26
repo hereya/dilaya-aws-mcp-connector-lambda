@@ -488,11 +488,16 @@ to 0.1.116** (golden profiles a–d unchanged, plus a prod-like synth).
   pod's region** covering it — `*.dilaya.eu` does not cover a two-label name like
   `ca.app.dilaya.eu`). `customDomain` and `mcp.<zone>` stay what the pod **accepts and advertises**:
   authorizer audience, PRM `resource`, the connector's `customDomain`/`MCP_DOMAIN` env, the
-  `POST /` plugin route, the per-app Lambda prefix (`app-app-`). The pod creates **neither** public
+  `POST /` plugin route, and — on a primary pod only — the per-app Lambda prefix (`app-app-`). The pod creates **neither** public
   domain nor public record (they belong to the front door). The app-content edge, if enabled, fronts
   `originDomain`. Output `OriginUrl`.
 - **`skipGlobalResources=true`**: a secondary pod. Requires `originDomain`; skips the legacy
-  `*.<customDomain>` frontend distribution; refuses `appContentDomain` / `filesDomain` at synth.
+  `*.<customDomain>` frontend distribution; refuses `appContentDomain` / `filesDomain` at synth; and
+  takes its per-app name prefix from `originDomain`'s first label (`app-ca.dilaya.eu` → `app-ca-app-`,
+  0.1.121), since that prefix names **account-global IAM roles** the connector creates at runtime
+  (`<prefix>role-shared`, `<prefix>role-<o8>-<a8>`): on `app-app-` the CA pod's first `deploy-backend`
+  would `PutRolePolicy` over the EU shared role. An `originDomain` whose first label is the public one
+  (`app.ca.dilaya.eu`) is refused at synth.
 
 Once-per-account resources a second pod must **not** recreate, and how it avoids them:
 
@@ -502,6 +507,7 @@ Once-per-account resources a second pod must **not** recreate, and how it avoids
 | `mcp.<zone>` plugin host domain + A record | one DNS name | `originDomain` (not owned) |
 | App-content edge: CloudFront `*.dilaya-apps.eu` + wildcard A/AAAA + `_dmarc` TXT, CF Function `app-app-apphost-router` (global name), KVS, static bucket/OAC, edge log bucket, cache/origin-request policies, BYOD IAM, Route 53 Domains IAM (global API), `ByodOriginRestamp` trigger (rewrites every `dilaya:byod` distribution) | global CloudFront names/aliases, one DNS name, account-wide side effects | don't set `appContentDomain` (refused with the flag) |
 | Files domain: CloudFront `files.dilaya.eu` + A/AAAA | one alias / DNS name | don't set `filesDomain` (refused with the flag) |
+| Runtime IAM roles named from `APP_LAMBDA_NAME_PREFIX` (`<prefix>role-shared` + its inline policy, `<prefix>role-<o8>-<a8>`, the `role-migrate` orphan sweep) | IAM names are account-global | prefix from `originDomain` (`app-ca-app-`) |
 | Legacy frontend distribution `*.<customDomain>` + us-east-1 `DnsValidatedCertificate` + CF Function `<stack>-subdomain-rewrite` + wildcard record (only with Cognito env; not in prod today) | global alias / names | skipped by the flag |
 
 Everything else is regional (Lambdas, HTTP API, DynamoDB, SSM, Secrets, Scheduler group, alarms,

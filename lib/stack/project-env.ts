@@ -60,9 +60,23 @@ export function readProjectEnv(stack: cdk.Stack, ctx: StackContext): void {
   // Lambda naming prefix for per-app Lambdas (derived from customDomain)
   // -----------------------------------------------------------------------
 
-  const orgPrefix = customDomain
-    ? customDomain.split(".")[0]
+  // ⚠️ The prefix also names ACCOUNT-GLOBAL things the connector creates at
+  // runtime (IAM roles `<prefix>role-shared`, `<prefix>role-<o8>-<a8>`) and the
+  // orphan-role sweep it deletes by. A SECONDARY pod (same account, same public
+  // customDomain) must not share it, or its deploy-backend overwrites the
+  // primary's shared-role policy. It takes its own OWNED host instead
+  // (app-ca.dilaya.eu → `app-ca-app-`); a primary pod keeps the public one, so
+  // its template is unchanged (t_rca_p1_router B2, 26/10/2026).
+  const nameSource = ctx.skipGlobalResources ? ctx.originDomain : customDomain;
+  const orgPrefix = nameSource
+    ? nameSource.split(".")[0]
     : stack.stackName.substring(0, 20);
+  if (ctx.skipGlobalResources && customDomain && orgPrefix === customDomain.split(".")[0]) {
+    throw new Error(
+      `originDomain (${ctx.originDomain}) must start with a label other than the public one ` +
+        `(${orgPrefix}): a secondary pod's name prefix would collide with the primary's IAM roles`
+    );
+  }
   const appLambdaNamePrefix = `${orgPrefix}-app-`;
   ctx.appLambdaNamePrefix = appLambdaNamePrefix;
   ctx.capSecretEntry = capSecretEntry;
