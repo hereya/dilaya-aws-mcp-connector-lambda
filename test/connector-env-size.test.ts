@@ -77,7 +77,7 @@ describe("the connector Lambda's environment, resolved as in prod", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  function prodTemplate(): Template {
+  function prodTemplate(extra: Record<string, string> = {}): Template {
     process.env = {
       ...saved,
       hereyaProjectRootDir: root,
@@ -90,6 +90,7 @@ describe("the connector Lambda's environment, resolved as in prod", () => {
       appContentCertArn: "arn:aws:acm:us-east-1:123456789012:certificate/y",
       appContentOriginSecret: "s".repeat(64),
       domainPurchase: "true",
+      ...extra,
     };
     const app = new cdk.App();
     const stack = new DilayaConnectorLambdaStack(app, PROD_STACK_NAME, {
@@ -105,6 +106,14 @@ describe("the connector Lambda's environment, resolved as in prod", () => {
     // Every variable prod carries, so a missed one cannot flatter the figure.
     expect(Object.keys(vars).length).toBeGreaterThanOrEqual(50);
     expect(bytes).toBeLessThanOrEqual(BUDGET);
+  });
+
+  // Région Canada P1: a pod behind the region router carries its origin secret (64 chars here).
+  test(`with the region router's origin secret, still under ${BUDGET} bytes`, () => {
+    const t = prodTemplate({ regionRouterOriginSecret: "r".repeat(64) });
+    const vars = handlerEnv(t);
+    expect(vars.REGION_ROUTER_ORIGIN_SECRET).toBeDefined();
+    expect(resolvedEnvBytes(vars, t.toJSON().Resources)).toBeLessThanOrEqual(BUDGET);
   });
 
   test("does not carry what the connector rebuilds (bucket domains, the router's ARN)", () => {

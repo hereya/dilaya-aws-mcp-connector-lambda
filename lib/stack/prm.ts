@@ -3,27 +3,10 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import type { StackContext } from "./context";
 import { OPENAI_APPS_CHALLENGE_PATH, OPENAI_APPS_CHALLENGE_TOKEN } from "./openai-challenge";
+import { podTrustEnv, trustViewerHostInPrm } from "./region-router/pod-trust";
 
-export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
-  const { customDomain, fn, httpApi, memorySize, monitoredFunctions, oauthServerUrl, organizationId, timeout } = ctx;
-    const lambdaIntegration = new integrations.HttpLambdaIntegration(
-      "LambdaIntegration",
-      fn
-    );
-
-    // Compute service URL for PRM (custom domain or API endpoint)
-    const serviceUrl = customDomain
-      ? `https://${customDomain}`
-      : httpApi.apiEndpoint;
-
-    // -----------------------------------------------------------------------
-    // Protected Resource Metadata (RFC 9728)
-    // -----------------------------------------------------------------------
-
-    const prmLambda = new lambda.Function(stack, "PrmHandler", {
-      runtime: lambda.Runtime.NODEJS_24_X,
-      handler: "index.handler",
-      code: lambda.Code.fromInline(`
+// The PRM handler, inline. Kept byte-for-byte: it is part of every synthesized template.
+export const PRM_SOURCE = `
         exports.handler = async (event) => (event && event.rawPath === process.env.OPENAI_APPS_CHALLENGE_PATH) ? {
           // OpenAI plugin portal domain verification: the token, verbatim.
           statusCode: 200,
@@ -55,7 +38,33 @@ export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
             scopes_supported: ["mcp:access"],
           }),
         });
-      `),
+      `;
+
+/** Behind the region router the PRM reads the forwarded viewer host (pod-trust.ts). */
+export function prmCode(originSecret: string | undefined): string {
+  return originSecret ? trustViewerHostInPrm(PRM_SOURCE) : PRM_SOURCE;
+}
+
+export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
+  const { customDomain, fn, httpApi, memorySize, monitoredFunctions, oauthServerUrl, organizationId, timeout } = ctx;
+    const lambdaIntegration = new integrations.HttpLambdaIntegration(
+      "LambdaIntegration",
+      fn
+    );
+
+    // Compute service URL for PRM (custom domain or API endpoint)
+    const serviceUrl = customDomain
+      ? `https://${customDomain}`
+      : httpApi.apiEndpoint;
+
+    // -----------------------------------------------------------------------
+    // Protected Resource Metadata (RFC 9728)
+    // -----------------------------------------------------------------------
+
+    const prmLambda = new lambda.Function(stack, "PrmHandler", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline(prmCode(ctx.regionRouterOriginSecret)),
       memorySize: 128,
       timeout: cdk.Duration.seconds(5),
       environment: {
@@ -65,6 +74,7 @@ export function createPrmLambda(stack: cdk.Stack, ctx: StackContext): void {
         OPENAI_APPS_CHALLENGE: OPENAI_APPS_CHALLENGE_TOKEN,
         OPENAI_APPS_CHALLENGE_PATH,
         ...(ctx.mcpDomain ? { MCP_DOMAIN: ctx.mcpDomain } : {}),
+        ...podTrustEnv(ctx.regionRouterOriginSecret),
       },
     });
     monitoredFunctions.push({ label: "Prm", fn: prmLambda });

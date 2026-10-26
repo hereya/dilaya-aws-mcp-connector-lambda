@@ -506,9 +506,37 @@ Once-per-account resources a second pod must **not** recreate, and how it avoids
 
 Everything else is regional (Lambdas, HTTP API, DynamoDB, SSM, Secrets, Scheduler group, alarms,
 IAM roles with CloudFormation-generated names) and is simply built again in the second region.
-Open for P1: the front door must forward the viewer host (the pod sees `originDomain` in
-`requestContext.domainName`, so `MCP_DOMAIN` host detection and the PRM per-host `resource` need
-the forwarded host), and the app-content edge / BYOD distributions need per-org origin routing.
+The viewer host is forwarded by the region router (next section); the app-content edge / BYOD
+distributions still need per-org origin routing.
+
+## Region router: one public URL in front of every pod (t_rca_p1_router, 0.1.118)
+
+The front door of Région Canada (`lib/stack/region-router/`). **Off unless `regionRouter=true`;
+absent, the template is byte-identical to 0.1.117** (golden a–e + the release.yml synth).
+
+- **CloudFront distribution** for `customDomain` + `mcp.<zone>` (cert `regionRouterCertArn`,
+  us-east-1). Default origin = the HOME pod (first of `regionRouterOrigins`), HTTPS only, every
+  method, no cache, all viewer headers but Host (`Authorization` included), and the origin header
+  `x-dilaya-region-verify: <regionRouterOriginSecret>`. **No DNS record**: pointing the public names
+  at it is the cutover (explicit GO), after the pod serves its own `originDomain`.
+- **Viewer-request CloudFront Function** `<prefix>region-router` + **KVS** (org id → region, starts
+  EMPTY = everyone home). Decodes the bearer's `org_ids` for ROUTING only (no signature check; the
+  pod's authorizer and its own-region check still decide), reads ≤ 16 orgs, and swaps only the origin
+  `domainName` (the secret header is inherited). `/o/<orgId>/…` routes on the path's org. It always
+  sets `x-dilaya-viewer-host` (the viewer's Host) and `x-dilaya-route` (`path`/`token`/`body`/`home`),
+  overwriting anything a viewer sent.
+- **Lambda@Edge** (origin-request, body included) for `route=body` only — a bearer whose orgs sit in
+  different regions: `params.arguments.org` of the JSON-RPC message (a batch must agree), routed only
+  to a region the viewer function listed for that org; no org / unknown / > 1 MiB / truncated /
+  unparseable → home. It lives in **its own us-east-1 stack** (`edge-stack.ts`,
+  `bin/region-router-edge.ts`) and its version ARN comes in as `regionRouterEdgeVersionArn`: hereya
+  runs `cdk deploy` with no stack selector, which a second (`EdgeFunction`) stack would break.
+- **Pod trust** (`pod-trust.ts`): with `regionRouterOriginSecret` — set it on EVERY pod behind the
+  router — the connector (`REGION_ROUTER_ORIGIN_SECRET`) and the PRM honour `x-dilaya-viewer-host`
+  only on a request whose `x-dilaya-region-verify` equals it (constant-time). Without it, ignored.
+  A separate secret from `appContentOriginSecret`, which would unlock the origin-locked site routes.
+
+The two edge programs are executed by `test/region-router/` (lifted from the synthesized templates).
 
 ## Source layout — the stack is a list of build steps
 
@@ -539,9 +567,10 @@ therefore the deployed resources — are unchanged by the split.
 
 ### Proving a change to the stack kept the template intact
 
-`npx ts-node --prefer-ts-exts scripts/synth-golden.ts <dir>` synthesizes the stack under five env
+`npx ts-node --prefer-ts-exts scripts/synth-golden.ts <dir>` synthesizes the stack under six env
 profiles — minimal, custom domain + Cognito + runtime layer, the full production shape, the
-same features with every optional sub-feature off, and a secondary regional pod — and writes one template JSON per profile. Run
+same features with every optional sub-feature off, a secondary regional pod, and a primary pod
+behind its region router — and writes one template JSON per profile. Run
 it before a refactor, run it after, `diff -r` the two directories.
 
 Neither `tsc` nor a green `cdk synth` can see a moved resource or a re-ordered policy statement;

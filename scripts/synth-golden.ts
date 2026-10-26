@@ -140,6 +140,25 @@ const profiles: Profile[] = [
       hereyaProjectEnv: JSON.stringify({ ...BASE_PROJECT_ENV, ...COGNITO_ENV }),
     },
   },
+  {
+    // F — the primary pod behind its REGION ROUTER (t_rca_p1_router): owns its
+    // origin host, creates the front-door distribution + function + KVS, wires
+    // the Lambda@Edge version, honours the forwarded viewer host.
+    name: "f-region-router",
+    layer: true,
+    env: {
+      customDomain: "app.example.eu",
+      customDomainZone: "example.eu",
+      wildcardCertificateArn: "arn:aws:acm:eu-west-1:123456789012:certificate/1111-2222",
+      originDomain: "app-eu.example.eu",
+      regionRouter: "true",
+      regionRouterOrigins: "eu-west-1:app-eu.example.eu,ca-central-1:app-ca.example.eu",
+      regionRouterCertArn: "arn:aws:acm:us-east-1:123456789012:certificate/7777-8888",
+      regionRouterEdgeVersionArn: "arn:aws:lambda:us-east-1:123456789012:function:rr-edge:1",
+      regionRouterOriginSecret: "0123456789abcdef0123456789abcdef-router",
+      hereyaProjectEnv: JSON.stringify(BASE_PROJECT_ENV),
+    },
+  },
 ];
 
 const KEYS = [
@@ -149,7 +168,8 @@ const KEYS = [
   "appContentOriginSecret", "appContentOriginSecretPrevious", "frontendRateLimit",
   "frontendRateBlock", "domainPurchase", "expectedAudience", "additionalForwardedHeaders",
   "telegramBotTokenParam", "telegramChatId", "alarmInboxOrg", "alarmInboxApp",
-  "originDomain", "skipGlobalResources", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain",
+  "originDomain", "skipGlobalResources", "regionRouter", "regionRouterOrigins",
+  "regionRouterCertArn", "regionRouterEdgeVersionArn", "regionRouterOriginSecret", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain",
 ];
 
 for (const p of profiles) {
