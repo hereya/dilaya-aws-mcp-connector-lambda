@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib/core";
 import type { StackContext } from "./context";
 import { readPodTopology } from "./pod-topology";
+import { readRegionRouter } from "./region-router/config";
 
 export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
 
@@ -147,6 +148,9 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   );
   ctx.originDomain = originDomain;
   ctx.skipGlobalResources = skipGlobalResources;
+  const rr = readRegionRouter(process.env, customDomain, mcpDomain, skipGlobalResources);
+  ctx.regionRouter = rr.config;
+  ctx.regionRouterOriginSecret = rr.originSecret;
 
   ctx.appContentCertArn = appContentCertArn;
   ctx.appContentDomain = appContentDomain;

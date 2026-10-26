@@ -53,6 +53,8 @@ import { createMcpRefusalsAlarm } from "./stack/alarms/mcp-refusals";
 import { createAppStateAlarms } from "./stack/alarms/dynamodb";
 import { createSweepTick } from "./stack/sweep-tick";
 import { createFilesDomain } from "./stack/files-domain";
+import { createRegionRouter } from "./stack/region-router/distribution";
+import { applyPodTrust } from "./stack/region-router/pod-trust";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -190,5 +192,10 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // After it for the same reason: a schedule rule and a resource policy, no
     // role statement, no env var — nothing above can be re-ordered by it.
     createSweepTick(this, ctx);
+
+    // Région Canada P1 (region-router/config.ts), last for the same reason:
+    // inert when absent; when on, new resources, outputs and one env var.
+    applyPodTrust(this, ctx);
+    createRegionRouter(this, ctx);
   }
 }

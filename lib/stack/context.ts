@@ -13,6 +13,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import type { RegionRouterConfig } from "./region-router/config";
 
 /**
  * One secret:// entry of `hereyaProjectEnv`, resolved into a real Secret.
@@ -64,6 +65,10 @@ export interface StackContext {
   mcpDomain: string | undefined;
   originDomain: string | undefined;
   skipGlobalResources: boolean;
+  /** The region router's edge (region-router/config.ts); undefined → none. */
+  regionRouter: RegionRouterConfig | undefined;
+  /** Pod side: honour x-dilaya-viewer-host when the request proves this secret. */
+  regionRouterOriginSecret: string | undefined;
   frontendForwardHeaders: string[];
 
   // --- hereyaProjectEnv, split three ways ---
