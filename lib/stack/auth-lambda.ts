@@ -25,8 +25,12 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
       customDomain: customDomain ?? "",
       bucketName: plainEnv["bucketName"] ?? "",
       s3Prefix: plainEnv["s3Prefix"] ?? "",
+      // The login code is read from the trigger's table, never from the
+      // InitiateAuth answer (which any caller of a public client sees).
+      ...(ctx.otpTable ? { OTP_TABLE_NAME: ctx.otpTable.tableName } : {}),
     },
   });
+  if (ctx.otpTable) ctx.otpTable.grantReadData(authLambdaFn);
 
   // Apply the SQLite-data package IAM (Data API + registry + capability
   // secret) + S3 read so the auth Lambda can resolve the app, read

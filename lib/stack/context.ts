@@ -101,6 +101,8 @@ export interface StackContext {
   triggerArns: string[];
   /** Same four, same order, as bare function NAMES — what the connector env carries. */
   triggerNames: string[];
+  /** The login-code table the trigger writes; the auth Lambda reads the code from it. */
+  otpTable?: dynamodb.Table;
   appStateTable: dynamodb.Table;
 
   // --- HTTP API ---

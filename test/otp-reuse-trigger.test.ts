@@ -40,7 +40,7 @@ const POOL = "eu-west-1_P";
 const EMAIL = "jo@acme.fr";
 const challenge = async () => {
   const res = await handler({ userPoolId: POOL, request: { userAttributes: { email: EMAIL } }, response: {} });
-  return res.response.publicChallengeParameters.otp as string;
+  return res.response.privateChallengeParameters.answer as string; // never public (otp-not-public.test.ts)
 };
 const record = () => store.get(`${POOL}|${EMAIL}`)!;
 let now = 1_800_000_000_000;
