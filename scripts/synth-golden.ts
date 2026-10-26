@@ -159,6 +159,26 @@ const profiles: Profile[] = [
       hereyaProjectEnv: JSON.stringify(BASE_PROJECT_ENV),
     },
   },
+  {
+    // G — the secondary pod wired to the EU registry's global partitions and
+    // to the eu-west-1 SSM parameter its executor left unresolved
+    // (t_rca_p1_router B1 + G3, lib/stack/secondary-pod.ts).
+    name: "g-secondary-pod-global",
+    layer: true,
+    env: {
+      customDomain: "app.example.eu",
+      customDomainZone: "example.eu",
+      wildcardCertificateArn: "arn:aws:acm:ca-central-1:123456789012:certificate/5555-6666",
+      originDomain: "ca.app.example.eu",
+      skipGlobalResources: "true",
+      globalRegistryTableArn: "arn:aws:dynamodb:eu-west-1:123456789012:table/eu-registry",
+      hereyaProjectEnv: JSON.stringify({
+        ...BASE_PROJECT_ENV,
+        // The harness synthesizes in eu-west-1, so the "other" region is us-east-2.
+        GITHUB_APP_PRIVATE_KEY: "aws:arn:aws:ssm:us-east-2:123456789012:parameter/hereya/gh-key",
+      }),
+    },
+  },
 ];
 
 const KEYS = [
@@ -170,6 +190,7 @@ const KEYS = [
   "telegramBotTokenParam", "telegramChatId", "alarmInboxOrg", "alarmInboxApp",
   "originDomain", "skipGlobalResources", "regionRouter", "regionRouterOrigins",
   "regionRouterCertArn", "regionRouterEdgeVersionArn", "regionRouterOriginSecret", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain",
+  "globalRegistryTableArn",
 ];
 
 for (const p of profiles) {

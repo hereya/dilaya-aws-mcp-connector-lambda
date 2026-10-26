@@ -510,6 +510,22 @@ Once-per-account resources a second pod must **not** recreate, and how it avoids
 | Runtime IAM roles named from `APP_LAMBDA_NAME_PREFIX` (`<prefix>role-shared` + its inline policy, `<prefix>role-<o8>-<a8>`, the `role-migrate` orphan sweep) | IAM names are account-global | prefix from `originDomain` (`app-ca-app-`) |
 | Legacy frontend distribution `*.<customDomain>` + us-east-1 `DnsValidatedCertificate` + CF Function `<stack>-subdomain-rewrite` + wildcard record (only with Cognito env; not in prod today) | global alias / names | skipped by the flag |
 
+**What a secondary pod still needs of the primary region** (0.1.122, t_rca_p1_router B1 + G3,
+`lib/stack/secondary-pod.ts`; inert on a primary pod — golden a–d + f byte-identical):
+
+- `POD_ROLE=secondary` on the connector: its sweeps that mutate once-per-account resources
+  (`hostmap_sync`, `edge_usage_sync`, `domain_watch`) do not run there.
+- `globalRegistryTableArn` (the EU registry table's ARN) → `GLOBAL_REGISTRY_TABLE_ARN`: the
+  registry's GLOBAL partitions (`_hosts` — vanity hosts, org slugs, bought domains, BYOD
+  distributions — and `_catalog`) stay in the EU registry, sole source of truth (no Global Tables);
+  the CA connector reads/writes them cross-region. IAM: Get/Put/Update/Delete/Query/ConditionCheck on
+  that table under `ForAllValues:StringEquals dynamodb:LeadingKeys = [_hosts, _catalog]` — never an
+  EU org's rows, never Scan.
+- A static `aws:` env value pointing at an SSM parameter of ANOTHER region (the GitHub App key,
+  eu-west-1) is not resolved by the executor deploying in ca-central-1 and arrives as the ARN; the
+  connector resolves it at runtime in that ARN's region. IAM: `ssm:GetParameter` on exactly those
+  ARNs + `kms:Decrypt` via `ssm.<that region>`. Derived from the env itself — no parameter.
+
 Everything else is regional (Lambdas, HTTP API, DynamoDB, SSM, Secrets, Scheduler group, alarms,
 IAM roles with CloudFormation-generated names) and is simply built again in the second region.
 The viewer host is forwarded by the region router (next section); the app-content edge / BYOD

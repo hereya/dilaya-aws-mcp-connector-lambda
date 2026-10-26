@@ -55,6 +55,7 @@ import { createSweepTick } from "./stack/sweep-tick";
 import { createFilesDomain } from "./stack/files-domain";
 import { createRegionRouter } from "./stack/region-router/distribution";
 import { applyPodTrust } from "./stack/region-router/pod-trust";
+import { wireSecondaryPod } from "./stack/secondary-pod";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -117,6 +118,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     grantAppLambdaManagement(this, ctx);
     grantConnectorSsm(this, ctx);
     setConnectorEnv(this, ctx);
+    wireSecondaryPod(this, ctx);
     createAppStateTable(this, ctx);
     grantCognitoProvisioning(this, ctx);
 
