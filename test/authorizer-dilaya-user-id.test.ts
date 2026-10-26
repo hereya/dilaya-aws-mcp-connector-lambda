@@ -49,6 +49,7 @@ const base = {
   exp: Math.floor(Date.now() / 1000) + 3600,
   email: "ana@example.com",
   sub: "sub-eu-1111",
+  email_verified: true,
 };
 
 beforeAll(() => {

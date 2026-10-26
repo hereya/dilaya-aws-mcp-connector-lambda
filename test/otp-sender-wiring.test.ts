@@ -59,4 +59,20 @@ describe("login-code sender wiring", () => {
       Environment: { Variables: Match.objectLike({ OTP_SENDER_DOMAIN: "dilaya-apps.eu", COGNITO_REGION: Match.anyValue() }) },
     });
   });
+  // t_cognito_write_attrs: the login code is read from the trigger table, never
+  // from the InitiateAuth answer — the auth Lambda gets the table name + read.
+  it("hands the auth Lambda the OTP table (name + read access)", () => {
+    const t = template(EDGE);
+    const tables = t.findResources("AWS::DynamoDB::Table");
+    const otpId = Object.keys(tables).find((id) => id.startsWith("AppAuthOtpTable"))!;
+    t.hasResourceProperties("AWS::Lambda::Function", {
+      Environment: { Variables: Match.objectLike({ OTP_SENDER_DOMAIN: "dilaya-apps.eu", OTP_TABLE_NAME: { Ref: otpId } }) },
+    });
+    const fns = Object.values(t.findResources("AWS::Lambda::Function")) as Array<{ Properties: any }>;
+    const auth = fns.find((r) => r.Properties.Environment?.Variables?.OTP_SENDER_DOMAIN)!;
+    const role = auth.Properties.Role["Fn::GetAtt"][0];
+    const mine = Object.values(t.findResources("AWS::IAM::Policy")).filter((p: any) =>
+      JSON.stringify(p.Properties.Roles).includes(role));
+    expect(JSON.stringify(mine)).toMatch(new RegExp(`"dynamodb:GetItem"[^}]*\\{"Fn::GetAtt":\\["${otpId}"`));
+  });
 });

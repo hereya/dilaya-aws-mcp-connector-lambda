@@ -66,6 +66,7 @@ export function createAppAuthTriggers(stack: cdk.Stack, ctx: StackContext): void
 
   otpTable.grantReadWriteData(createChallengeFn);
   otpTable.grantReadWriteData(verifyChallengeFn);
+  ctx.otpTable = otpTable;
 
   // Verify trigger also updates the Cognito user attribute `email_verified`.
   // Scoping to resource="*" because per-app pools are created at runtime by
