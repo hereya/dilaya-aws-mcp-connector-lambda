@@ -65,11 +65,19 @@ export function makeViewer(code: string, kvsData: Record<string, string> = KVS) 
 }
 
 /** A CloudFront Functions viewer-request event. */
-export function viewerEvent(opts: { host?: string; uri?: string; auth?: string; extra?: Record<string, string> }) {
+export function viewerEvent(opts: {
+  host?: string;
+  uri?: string;
+  auth?: string;
+  extra?: Record<string, string>;
+  query?: Record<string, string>;
+}) {
   const headers: Record<string, { value: string }> = { host: { value: opts.host ?? "app.dilaya.eu" } };
   if (opts.auth) headers.authorization = { value: opts.auth };
   for (const [k, v] of Object.entries(opts.extra ?? {})) headers[k] = { value: v };
-  return { request: { method: "POST", uri: opts.uri ?? "/mcp", querystring: {}, headers, cookies: {} } };
+  const querystring: Record<string, { value: string }> = {};
+  for (const [k, v] of Object.entries(opts.query ?? {})) querystring[k] = { value: v };
+  return { request: { method: "POST", uri: opts.uri ?? "/mcp", querystring, headers, cookies: {} } };
 }
 
 export function edgeCode(): string {

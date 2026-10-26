@@ -14,6 +14,8 @@ export const MAX_TOKEN_ORGS = 16;
  *
  * x-dilaya-route tells the origin (and the Lambda@Edge) what was decided:
  *   path   /o/<orgId>/… — the org named in the path
+ *   query  /mcp-connections/… without a bearer: the `org` query (consent link, channel events)
+ *          or the org prefix of the OAuth `state` ("<orgId>.<uuid>", the callback)
  *   token  every org of the bearer lives in ONE region
  *   body   orgs in several regions: x-dilaya-org-regions lists the non-home ones
  *          ("<org>:<region>,…") and the Lambda@Edge reads the JSON-RPC body
@@ -44,7 +46,8 @@ function b64url(s) {
   }
   return out;
 }
-// The org ids a bearer CLAIMS (org_ids, or a legacy single orgId). Unverified.
+// The org ids a bearer CLAIMS (org_ids, a legacy single orgId, or the "org" claim of
+// dilaya.eu's org-events assertion). Unverified.
 function orgsOf(h) {
   var a = h.authorization;
   if (!a || !a.value || a.value.length > 16384) return [];
@@ -53,12 +56,21 @@ function orgsOf(h) {
   var p;
   try { p = JSON.parse(b64url(m[1])); } catch (e) { return []; }
   if (!p || typeof p !== 'object') return [];
-  var ids = Array.isArray(p.org_ids) ? p.org_ids : (typeof p.orgId === 'string' ? [p.orgId] : []);
+  var one = typeof p.orgId === 'string' ? p.orgId : p.org;
+  var ids = Array.isArray(p.org_ids) ? p.org_ids : (typeof one === 'string' ? [one] : []);
   var out = [];
   for (var i = 0; i < ids.length && out.length < MAX_ORGS; i++) {
     if (typeof ids[i] === 'string' && ORG_RE.test(ids[i]) && out.indexOf(ids[i]) < 0) out.push(ids[i]);
   }
   return out;
+}
+// The org a bearer-less /mcp-connections/ request names in its query, or ''.
+function queryOrg(request) {
+  if (request.uri.indexOf('/mcp-connections/') !== 0) return '';
+  var q = request.querystring || {};
+  if (q.org && ORG_RE.test(q.org.value)) return q.org.value;
+  var st = q.state ? /^([A-Za-z0-9-]{1,64})\.[A-Za-z0-9-]{1,64}$/.exec(q.state.value) : null;
+  return st ? st[1] : '';
 }
 // Unknown org (no KVS key) or a region this distribution has no origin for -> HOME.
 async function regionOf(org) {
@@ -74,9 +86,13 @@ async function handler(event) {
   var route = 'home';
   var region = HOME;
   var pm = /^\\/o\\/([A-Za-z0-9-]{1,64})\\//.exec(request.uri);
+  var qo = pm || h.authorization ? '' : queryOrg(request);
   if (pm) {
     route = 'path';
     region = await regionOf(pm[1]);
+  } else if (qo) {
+    route = 'query';
+    region = await regionOf(qo);
   } else {
     var orgs = orgsOf(h);
     var seen = {};
