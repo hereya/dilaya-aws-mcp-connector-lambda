@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib/core";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { CLOUDFRONT_FUNCTION_MAX_BYTES } from "../app-content/router-stop-pages";
 import type { StackContext } from "../context";
@@ -16,7 +17,9 @@ import { viewerFunctionCode } from "./viewer-function";
  * then the distribution answers only on its *.cloudfront.net name.
  *
  * The KVS starts EMPTY, and an org with no key routes HOME: the day it is switched on, every
- * request goes exactly where it goes today. Filling it (org row's region → KVS) is the next lot.
+ * request goes exactly where it goes today. The CONNECTOR fills it (t_rca_p1_router lot 2,
+ * dilaya-connector src/region-router/): REGION_ROUTER_KVS_ARN + the three data-plane actions it
+ * calls, on this store only — added here, so a pod without the router gets neither.
  */
 export function createRegionRouter(stack: cdk.Stack, ctx: StackContext): void {
   const rr = ctx.regionRouter;
@@ -26,6 +29,17 @@ export function createRegionRouter(stack: cdk.Stack, ctx: StackContext): void {
   const kvs = new cloudfront.KeyValueStore(stack, "RegionRouterKvs", {
     comment: "org id -> region (region router, t_rca_p1_router)",
   });
+  ctx.fn.addEnvironment("REGION_ROUTER_KVS_ARN", kvs.keyValueStoreArn);
+  ctx.fn.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: [
+        "cloudfront-keyvaluestore:DescribeKeyValueStore",
+        "cloudfront-keyvaluestore:ListKeys",
+        "cloudfront-keyvaluestore:UpdateKeys",
+      ],
+      resources: [kvs.keyValueStoreArn],
+    })
+  );
   const code = viewerFunctionCode(rr.origins, rr.home);
   if (Buffer.byteLength(code, "utf8") > CLOUDFRONT_FUNCTION_MAX_BYTES) {
     throw new Error("region-router function exceeds the CloudFront 10 KB code limit");
