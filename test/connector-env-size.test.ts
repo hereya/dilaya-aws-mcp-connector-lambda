@@ -116,6 +116,19 @@ describe("the connector Lambda's environment, resolved as in prod", () => {
     expect(resolvedEnvBytes(vars, t.toJSON().Resources)).toBeLessThanOrEqual(BUDGET);
   });
 
+  // Lot 2: the pod that OWNS the router also carries the KVS ARN the connector syncs.
+  test(`with the region router on (secret + KVS ARN), still under ${BUDGET} bytes`, () => {
+    const t = prodTemplate({
+      regionRouter: "true",
+      regionRouterOrigins: "eu-west-1:app-eu.dilaya.eu,ca-central-1:app-ca.dilaya.eu",
+      regionRouterCertArn: "arn:aws:acm:us-east-1:123456789012:certificate/rr-1",
+      regionRouterOriginSecret: "r".repeat(64),
+    });
+    const vars = handlerEnv(t);
+    expect(vars.REGION_ROUTER_KVS_ARN).toBeDefined();
+    expect(resolvedEnvBytes(vars, t.toJSON().Resources)).toBeLessThanOrEqual(BUDGET);
+  });
+
   test("does not carry what the connector rebuilds (bucket domains, the router's ARN)", () => {
     const vars = handlerEnv(prodTemplate());
     for (const k of ["EDGE_LOG_BUCKET_DOMAIN", "APP_STATIC_BUCKET_DOMAIN", "APP_CONTENT_CF_FUNCTION_ARN"]) {
