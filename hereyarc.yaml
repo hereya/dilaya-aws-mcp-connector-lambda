@@ -23,6 +23,9 @@ parameters:
   appContentOriginSecret:
     description: "Shared secret for the UN-FORGEABLE origin lock. When set (with appContentDomain), the app-content CloudFront distribution stamps it as x-dilaya-origin-verify on every edge->origin request and the frontend authorizer requires it on site/auth routes — so a direct app.dilaya.eu path hit (which can't reproduce the secret) is denied. Supply from a GitHub Secret, not a Variable. Absent → the authorizer keeps the forgeable marker-presence gate."
     mandatory: false
+  appContentRegionOrigins:
+    description: "Région CA (t_rca_p1_router step 4): the app-content router serves a host whose KVS value carries g=<region> (an org of another region) from THAT region — dynamic paths to the pod's own API host, /static/* and static sections to that region's static-assets bucket (OAC). Format region:host:bucket-regional-domain, comma-separated, e.g. ca-central-1:app-ca.dilaya.eu:<bucket>.s3.ca-central-1.amazonaws.com. A g with no entry is answered 503 at the edge. Only meaningful with appContentDomain (primary pod). Absent → the router function is byte-identical and ignores g."
+    mandatory: false
   domainPurchase:
     description: "Set to \"true\" to enable domain purchase through Dilaya (Route 53 Domains): injects DOMAIN_PURCHASE_ENABLED=true + the route53domains grants (global API, account-broad — hence the explicit opt-in) and the hosted-zone record rights for purchased-domain zones. Requires appContentDomain (the wiring rides the BYOD flow). Absent/other → fully inert."
     mandatory: false

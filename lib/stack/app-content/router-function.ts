@@ -8,16 +8,18 @@ import {
   stripCommentLines,
 } from "./router-stop-pages";
 import { LOGIN_GATE_BRANCH } from "./router-login-gate";
+import { parseRegionOrigins, regionPieces, type RegionOrigin } from "./router-region";
 
 /**
  * The viewer-request function's SOURCE, comments included — read this, ship
  * `routerFunctionCode()`. Every `//` line below is stripped before synth (the
  * edge has a 10 KB code budget); the code lines ship byte-identical.
  */
-export function routerFunctionSource(staticBucketDomain: string): string {
+export function routerFunctionSource(staticBucketDomain: string, regions?: Record<string, RegionOrigin>): string {
+  const rp = regionPieces(regions, staticBucketDomain);
   return `import cf from 'cloudfront';
 const kvs = cf.kvs();
-function qsOf(request) {
+${rp.prelude}function qsOf(request) {
   var qs = request.querystring;
   var parts = [];
   for (var k in qs) {
@@ -81,7 +83,7 @@ async function handler(event) {
       }
     };
   }
-  var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
+${rp.branch}  var uri = request.uri;                  // e.g. "/e/foo" or "/auth/login" or "/"
   // LOGIN REQUIRED (value flags auth + pub) — the branch lives in router-login-gate.ts.
 ${LOGIN_GATE_BRANCH}
   // STAGING (value flag e = 's', deploy-pkg >= 0.1.30): this host serves the
@@ -97,7 +99,7 @@ ${LOGIN_GATE_BRANCH}
   // maps it to the tenant's key prefix): "/static/x" -> "/_appstatic/<org>/<app>/x"
   if (uri === '/static' || uri.indexOf('/static/') === 0) {
     request.uri = '/_appstatic/' + e.o + '/' + a + uri.slice(7);
-    return request;
+${rp.staticAssets}    return request;
   }
   // STATIC sections (value flag p = URI prefix list, phase 3 hybrid): paths
   // under a declared prefix serve the app's pre-built site bundle from the
@@ -140,7 +142,7 @@ ${LOGIN_GATE_BRANCH}
       }
       request.uri = '/_appsite/' + e.o + '/' + a + file;
       cf.updateRequestOrigin({
-        "domainName": "${staticBucketDomain}",
+        "domainName": ${rp.bucketExpr},
         "originAccessControlConfig": {
           "enabled": true,
           "signingBehavior": "always",
@@ -162,18 +164,20 @@ ${LOGIN_GATE_BRANCH}
       : '/o/' + e.o + '/' + e.a + siteSeg;
   request.uri = prefix + uri;             // "/o/<org>/<app>/site/e/foo"
   request.headers['x-dilaya-app-host'] = { value: host };  // carry viewer host to origin
-  return request;
+${rp.dynamic}  return request;
 }`;
 }
 
 /** What actually ships: the source minus its comment lines. */
-export function routerFunctionCode(staticBucketDomain: string): string {
-  return stripCommentLines(routerFunctionSource(staticBucketDomain));
+export function routerFunctionCode(staticBucketDomain: string, regions?: Record<string, RegionOrigin>): string {
+  return stripCommentLines(routerFunctionSource(staticBucketDomain, regions));
 }
 
 export function createAppHostRouter(stack: cdk.Stack, ctx: StackContext): void {
   const { appHostKvs, appLambdaNamePrefix, staticAssetsBucket } = ctx;
-  const code = routerFunctionCode(staticAssetsBucket.bucketRegionalDomainName);
+  // Région CA (router-region.ts): absent → byte-identical function.
+  const regions = parseRegionOrigins(process.env["appContentRegionOrigins"], stack.region);
+  const code = routerFunctionCode(staticAssetsBucket.bucketRegionalDomainName, regions);
   // The bucket domain is a CFN token here (resolved at deploy), so the byte
   // count below is a lower bound; the test suite measures the real thing with
   // a literal domain. Both must stay under the edge's 10 KB limit.
