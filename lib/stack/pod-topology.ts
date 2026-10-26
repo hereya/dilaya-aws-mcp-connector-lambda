@@ -7,7 +7,9 @@
  *   - Public (`customDomain`, e.g. app.dilaya.eu, and the plugin host
  *     `mcp.<zone>`): still what the pod ACCEPTS and ADVERTISES — the authorizer
  *     audience https://<customDomain>/mcp, the PRM resource, the URLs the
- *     connector builds (its `customDomain` env), the per-app Lambda prefix.
+ *     connector builds (its `customDomain` env), and — on a PRIMARY pod — the
+ *     per-app Lambda prefix (a secondary one names it from originDomain:
+ *     project-env.ts, the prefix names account-global IAM roles).
  *   - Owned (`originDomain`, e.g. eu.app.dilaya.eu / ca.app.dilaya.eu): the ONLY
  *     API Gateway custom domain + Route 53 record this pod creates. The public
  *     names then belong to the front door that routes each org to its pod —
