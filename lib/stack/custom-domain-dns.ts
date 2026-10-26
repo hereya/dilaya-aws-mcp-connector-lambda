@@ -40,9 +40,11 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
     })
   );
 
-  // API Gateway custom domain for MCP (exact domain)
+  // API Gateway custom domain for MCP (exact domain). With originDomain
+  // (pod-topology.ts) the pod owns its ORIGIN host instead of the public one.
+  const ownedDomain = ctx.originDomain ?? customDomain;
   const domainName = new apigwv2.DomainName(stack, "DomainName", {
-    domainName: customDomain,
+    domainName: ownedDomain,
     certificate,
   });
 
@@ -53,7 +55,7 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
 
   new route53.ARecord(stack, "AliasRecord", {
     zone: hostedZone,
-    recordName: customDomain,
+    recordName: ownedDomain,
     target: route53.RecordTarget.fromAlias(
       new targets.ApiGatewayv2DomainProperties(
         domainName.regionalDomainName,
@@ -67,7 +69,9 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
   // routes.ts). The wildcard cert covers it; the specific record wins over the
   // zone's `*` record. The connector reads MCP_DOMAIN to serve that host its
   // own tool surface (no text-recipe tools: those ship as plugin skills).
-  if (ctx.mcpDomain) {
+  // Behind an originDomain the plugin host is the front door's, like the
+  // public name: still advertised (MCP_DOMAIN, audience, root route), not owned.
+  if (ctx.mcpDomain && !ctx.originDomain) {
     const mcpDomainName = new apigwv2.DomainName(stack, "McpDomainName", {
       domainName: ctx.mcpDomain,
       certificate,
@@ -83,6 +87,8 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
         )
       ),
     });
+  }
+  if (ctx.mcpDomain) {
     fn.addEnvironment("MCP_DOMAIN", ctx.mcpDomain);
   }
 

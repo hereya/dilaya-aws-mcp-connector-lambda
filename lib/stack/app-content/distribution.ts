@@ -41,7 +41,9 @@ export function createAppContentDistribution(stack: cdk.Stack, ctx: StackContext
       // identifier in a log this reader does not otherwise touch.
       logIncludesCookies: false,
       defaultBehavior: {
-        origin: new origins.HttpOrigin(customDomain, {
+        // The API-GW custom domain this pod owns: the public name, or its
+        // originDomain when one is set (pod-topology.ts).
+        origin: new origins.HttpOrigin(ctx.originDomain ?? customDomain, {
           protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
           // Un-forgeable origin lock: stamp the shared secret on every
           // edge->origin request. Only this distribution knows it, so a

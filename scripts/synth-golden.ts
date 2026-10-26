@@ -126,6 +126,20 @@ const profiles: Profile[] = [
       hereyaProjectEnv: JSON.stringify(BASE_PROJECT_ENV),
     },
   },
+  {
+    // E — a SECONDARY regional pod (t_rca_p0_infra): owns only its origin host,
+    // no once-per-account edge resource, Cognito env present but ignored.
+    name: "e-secondary-pod",
+    layer: true,
+    env: {
+      customDomain: "app.example.eu",
+      customDomainZone: "example.eu",
+      wildcardCertificateArn: "arn:aws:acm:ca-central-1:123456789012:certificate/5555-6666",
+      originDomain: "ca.app.example.eu",
+      skipGlobalResources: "true",
+      hereyaProjectEnv: JSON.stringify({ ...BASE_PROJECT_ENV, ...COGNITO_ENV }),
+    },
+  },
 ];
 
 const KEYS = [
@@ -135,6 +149,7 @@ const KEYS = [
   "appContentOriginSecret", "appContentOriginSecretPrevious", "frontendRateLimit",
   "frontendRateBlock", "domainPurchase", "expectedAudience", "additionalForwardedHeaders",
   "telegramBotTokenParam", "telegramChatId", "alarmInboxOrg", "alarmInboxApp",
+  "originDomain", "skipGlobalResources", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain",
 ];
 
 for (const p of profiles) {

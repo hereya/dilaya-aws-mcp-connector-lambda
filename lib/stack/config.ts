@@ -1,5 +1,6 @@
 import * as cdk from "aws-cdk-lib/core";
 import type { StackContext } from "./context";
+import { readPodTopology } from "./pod-topology";
 
 export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
 
@@ -139,6 +140,13 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
     ...(appContentDomain ? ["x-dilaya-app-host"] : []),
     ...additionalForwardedHeaders,
   ].filter((h, i, a) => a.findIndex((x) => x.toLowerCase() === h.toLowerCase()) === i);
+
+  // Regional pods (pod-topology.ts): absent → today's single-pod shape.
+  const { originDomain, skipGlobalResources } = readPodTopology(
+    process.env, customDomain, customDomainZone, mcpDomain
+  );
+  ctx.originDomain = originDomain;
+  ctx.skipGlobalResources = skipGlobalResources;
 
   ctx.appContentCertArn = appContentCertArn;
   ctx.appContentDomain = appContentDomain;

@@ -62,6 +62,8 @@ export interface StackContext {
   domainPurchase: boolean;
   expectedAudience: string;
   mcpDomain: string | undefined;
+  originDomain: string | undefined;
+  skipGlobalResources: boolean;
   frontendForwardHeaders: string[];
 
   // --- hereyaProjectEnv, split three ways ---
