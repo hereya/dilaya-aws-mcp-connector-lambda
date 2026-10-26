@@ -9,7 +9,8 @@ import type { StackContext } from "./context";
  *
  * B1 — the registry's GLOBAL partitions (`_hosts`: vanity hosts, org slugs,
  * bought domains, BYOD distributions; `_catalog`) live ONLY in the primary
- * (EU) registry, the sole source of truth. The connector (≥ 0.1.405) reaches
+ * (EU) registry, the sole source of truth. The connector (the release that
+ * carries GLOBAL_REGISTRY_TABLE_ARN support, t_rca_p1_router B1) reaches
  * them cross-region through `GLOBAL_REGISTRY_TABLE_ARN`; its org/app rows stay
  * in the pod's own registry. The grant is pinned by `dynamodb:LeadingKeys` to
  * those two partitions: this pod can never read or write an EU org's rows.
