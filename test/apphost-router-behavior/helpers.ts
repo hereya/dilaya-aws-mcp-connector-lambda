@@ -22,7 +22,7 @@ import { DilayaConnectorLambdaStack } from "../../lib/dilaya-aws-mcp-connector-l
 
 export const APP_CONTENT_DOMAIN = "dilaya-apps.eu";
 
-export function routerSource(): string {
+export function routerSource(extraEnv: Record<string, string> = {}): string {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "connector-router-"));
   fs.mkdirSync(path.join(tmpRoot, "dist"), { recursive: true });
   fs.writeFileSync(
@@ -41,6 +41,7 @@ export function routerSource(): string {
   process.env.appContentZoneId = "Z0APPCONTENT123";
   process.env.appContentCertArn =
     "arn:aws:acm:us-east-1:123456789012:certificate/abc-123";
+  Object.assign(process.env, extraEnv);
   try {
     const app = new cdk.App();
     const stack = new DilayaConnectorLambdaStack(app, "RouterStack", {
@@ -68,8 +69,8 @@ export function routerSource(): string {
 type Kvs = Record<string, string>;
 
 /** The shipped function, with only its edge-runtime import stubbed out. */
-export function makeHandler(kvsData: Kvs) {
-  const src = routerSource().replace(/^import cf from 'cloudfront';\s*/m, "");
+export function makeHandler(kvsData: Kvs, extraEnv: Record<string, string> = {}) {
+  const src = routerSource(extraEnv).replace(/^import cf from 'cloudfront';\s*/m, "");
   const cfStub = {
     kvs: () => ({
       get: async (key: string) => {

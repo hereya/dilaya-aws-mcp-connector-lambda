@@ -564,6 +564,14 @@ absent, the template is byte-identical to 0.1.117** (golden a–e + the release.
 
 The two edge programs are executed by `test/region-router/` (lifted from the synthesized templates).
 
+**App-content sites of another region** (step 4, gap 1, `lib/stack/app-content/router-region.ts`): with
+`appContentRegionOrigins` (`region:host:bucket-regional-domain`, primary pod only) the vanity-host
+router serves a host whose KVS value carries `g=<region>` from that region — dynamic paths to its
+pod's own host (domain swap only, the origin-lock header follows), `/static/*` and static sections
+from its static-assets bucket (OAC). A `g` with no entry → 503 at the edge. Absent → byte-identical
+function (golden a–g). Prerequisites on the CA side (not in this package yet): a CA static bucket whose
+policy admits this account's distributions, and the CA pod checking the same `appContentOriginSecret`.
+
 ## Source layout — the stack is a list of build steps
 
 `lib/dilaya-aws-mcp-connector-lambda-stack.ts` used to be one 3 100-line constructor. It is now a
