@@ -150,7 +150,9 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       // CloudFront distribution for frontend (*.{customDomain})
       // -------------------------------------------------------------------
 
-      if (ctx.cognitoUserPoolId && ctx.cognitoClientId) {
+      // Once per account (us-east-1 cert, global CloudFront function name,
+      // *.<customDomain> record): never on a secondary pod (pod-topology.ts).
+      if (ctx.cognitoUserPoolId && ctx.cognitoClientId && !ctx.skipGlobalResources) {
         createSubdomainRewrite(this, ctx);
         createFrontendDistribution(this, ctx);
         seedViewerCert(this, ctx);
@@ -160,6 +162,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       new cdk.CfnOutput(this, "ServiceUrl", {
         value: `https://${customDomain}`,
       });
+      if (ctx.originDomain) {
+        new cdk.CfnOutput(this, "OriginUrl", {
+          value: `https://${ctx.originDomain}`,
+        });
+      }
     } else {
       new cdk.CfnOutput(this, "ServiceUrl", {
         value: ctx.httpApi.apiEndpoint,

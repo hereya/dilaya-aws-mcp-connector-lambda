@@ -476,6 +476,40 @@ every deployment shape (a sweep whose feature is off returns at once); the grant
 role's statement order is untouched. `test/sweep-tick.test.ts` pins the cadence, the target, the
 bare envelope and the permission.
 
+## Regional pods: `originDomain` + `skipGlobalResources` (t_rca_p0_infra, 0.1.117)
+
+Région Canada runs a second full pod (ca-central-1) next to Ireland, both behind the **same**
+public URL `app.dilaya.eu/mcp`; a front door (P1) routes each org to its pod's origin. Two
+optional inputs (`lib/stack/pod-topology.ts`) prepare that. **Absent, the template is byte-identical
+to 0.1.116** (golden profiles a–d unchanged, plus a prod-like synth).
+
+- **`originDomain`** (e.g. `ca.app.dilaya.eu`): the only API Gateway custom domain + Route 53 record
+  the pod creates (in the `customDomain` zone; `wildcardCertificateArn` must be a cert **of the
+  pod's region** covering it — `*.dilaya.eu` does not cover a two-label name like
+  `ca.app.dilaya.eu`). `customDomain` and `mcp.<zone>` stay what the pod **accepts and advertises**:
+  authorizer audience, PRM `resource`, the connector's `customDomain`/`MCP_DOMAIN` env, the
+  `POST /` plugin route, the per-app Lambda prefix (`app-app-`). The pod creates **neither** public
+  domain nor public record (they belong to the front door). The app-content edge, if enabled, fronts
+  `originDomain`. Output `OriginUrl`.
+- **`skipGlobalResources=true`**: a secondary pod. Requires `originDomain`; skips the legacy
+  `*.<customDomain>` frontend distribution; refuses `appContentDomain` / `filesDomain` at synth.
+
+Once-per-account resources a second pod must **not** recreate, and how it avoids them:
+
+| Resource (created by the primary pod) | Why once per account | Pod 2 |
+|---|---|---|
+| `app.dilaya.eu` API-GW domain + A record | one DNS name | `originDomain` |
+| `mcp.<zone>` plugin host domain + A record | one DNS name | `originDomain` (not owned) |
+| App-content edge: CloudFront `*.dilaya-apps.eu` + wildcard A/AAAA + `_dmarc` TXT, CF Function `app-app-apphost-router` (global name), KVS, static bucket/OAC, edge log bucket, cache/origin-request policies, BYOD IAM, Route 53 Domains IAM (global API), `ByodOriginRestamp` trigger (rewrites every `dilaya:byod` distribution) | global CloudFront names/aliases, one DNS name, account-wide side effects | don't set `appContentDomain` (refused with the flag) |
+| Files domain: CloudFront `files.dilaya.eu` + A/AAAA | one alias / DNS name | don't set `filesDomain` (refused with the flag) |
+| Legacy frontend distribution `*.<customDomain>` + us-east-1 `DnsValidatedCertificate` + CF Function `<stack>-subdomain-rewrite` + wildcard record (only with Cognito env; not in prod today) | global alias / names | skipped by the flag |
+
+Everything else is regional (Lambdas, HTTP API, DynamoDB, SSM, Secrets, Scheduler group, alarms,
+IAM roles with CloudFormation-generated names) and is simply built again in the second region.
+Open for P1: the front door must forward the viewer host (the pod sees `originDomain` in
+`requestContext.domainName`, so `MCP_DOMAIN` host detection and the PRM per-host `resource` need
+the forwarded host), and the app-content edge / BYOD distributions need per-org origin routing.
+
 ## Source layout — the stack is a list of build steps
 
 `lib/dilaya-aws-mcp-connector-lambda-stack.ts` used to be one 3 100-line constructor. It is now a
@@ -505,9 +539,9 @@ therefore the deployed resources — are unchanged by the split.
 
 ### Proving a change to the stack kept the template intact
 
-`npx ts-node --prefer-ts-exts scripts/synth-golden.ts <dir>` synthesizes the stack under four env
-profiles — minimal, custom domain + Cognito + runtime layer, the full production shape, and the
-same features with every optional sub-feature off — and writes one template JSON per profile. Run
+`npx ts-node --prefer-ts-exts scripts/synth-golden.ts <dir>` synthesizes the stack under five env
+profiles — minimal, custom domain + Cognito + runtime layer, the full production shape, the
+same features with every optional sub-feature off, and a secondary regional pod — and writes one template JSON per profile. Run
 it before a refactor, run it after, `diff -r` the two directories.
 
 Neither `tsc` nor a green `cdk synth` can see a moved resource or a re-ordered policy statement;
