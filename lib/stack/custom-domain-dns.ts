@@ -115,6 +115,9 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
   // pod-topology.ts): the region router's home origin. Additive only — the
   // resources above keep their logical ids, so adding it replaces nothing.
   if (ctx.originAlias) {
+    // The connector's BYOD distributions front the same origin host as the
+    // app-content edge (dilaya-connector src/byod-domains/origin-host.ts).
+    fn.addEnvironment("POD_ORIGIN_HOST", ctx.originAlias);
     const aliasDomainName = new apigwv2.DomainName(stack, "OriginAliasDomainName", {
       domainName: ctx.originAlias,
       certificate,
