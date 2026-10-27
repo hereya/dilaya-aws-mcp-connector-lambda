@@ -41,9 +41,12 @@ export function createAppContentDistribution(stack: cdk.Stack, ctx: StackContext
       // identifier in a log this reader does not otherwise touch.
       logIncludesCookies: false,
       defaultBehavior: {
-        // The API-GW custom domain this pod owns: the public name, or its
-        // originDomain when one is set (pod-topology.ts).
-        origin: new origins.HttpOrigin(ctx.originDomain ?? customDomain, {
+        // The API-GW custom domain this pod owns: its origin host (originDomain,
+        // or originAlias on the primary — pod-topology.ts), else the public name.
+        // Never the public name when the pod has an origin host: behind the
+        // region router that name is a CloudFront distribution, and the sites
+        // would cross two edges in a row (t_rca_p1_router step 6).
+        origin: new origins.HttpOrigin(ctx.originDomain ?? ctx.originAlias ?? customDomain, {
           protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
           // Un-forgeable origin lock: stamp the shared secret on every
           // edge->origin request. Only this distribution knows it, so a

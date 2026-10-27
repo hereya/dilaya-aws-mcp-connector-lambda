@@ -49,3 +49,35 @@ describe("primary pod: originAlias (an origin host NEXT TO the public names)", (
     expect(() => template({ originAlias: "app-eu.dilaya.eu" })).toThrow(/originAlias requires customDomain/);
   });
 });
+
+// t_rca_p1_router step 6: behind the region router the public name is a CloudFront distribution,
+// so the app-content edge (and the connector's BYOD distributions, via POD_ORIGIN_HOST) must
+// front the pod's own origin host, never the public name — else every site crosses two edges.
+describe("primary pod: the edges front the origin host", () => {
+  const template = useStackFixture("connector-origin-alias-edges-", "OriginAliasEdgesStack");
+  const APP_CONTENT = {
+    appContentDomain: "dilaya-apps.eu",
+    appContentZoneId: "ZAPP",
+    appContentCertArn: "arn:aws:acm:us-east-1:123456789012:certificate/y",
+  };
+  const contentOrigin = (t: any) =>
+    resources(t, "AWS::CloudFront::Distribution").find((d) =>
+      (d.Properties.DistributionConfig.Aliases ?? []).includes("*.dilaya-apps.eu")
+    ).Properties.DistributionConfig.Origins[0].DomainName;
+  const podOriginEnv = (t: any) =>
+    resources(t, "AWS::Lambda::Function")
+      .map((f) => f.Properties.Environment?.Variables?.POD_ORIGIN_HOST)
+      .filter(Boolean);
+
+  it("with originAlias: the app-content edge fronts app-eu, the connector learns it", () => {
+    const t = template({ ...EU, ...APP_CONTENT });
+    expect(contentOrigin(t)).toBe("app-eu.dilaya.eu");
+    expect(podOriginEnv(t)).toEqual(["app-eu.dilaya.eu"]);
+  });
+
+  it("without it: unchanged — the public name, no env", () => {
+    const t = template({ ...PUBLIC, ...APP_CONTENT });
+    expect(contentOrigin(t)).toBe("app.dilaya.eu");
+    expect(podOriginEnv(t)).toEqual([]);
+  });
+});
