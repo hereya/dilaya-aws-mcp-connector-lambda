@@ -114,6 +114,34 @@ describe("region router: the viewer function (token / path → region)", () => {
     expect(reads).toHaveLength(16);
   });
 
+  // 27/10/2026: the hand-written base64url loop exceeded the CloudFront Functions instruction
+  // cap on every REAL bearer (503 FunctionExecutionError before any pod), while this harness —
+  // Node, no cap — and the trial's tiny fake tokens stayed green. Node cannot count edge
+  // instructions, so the decode itself is pinned to the runtime's native decoder.
+  it("decodes the bearer with the runtime's native decoder, never a per-character loop", () => {
+    const decoder = /function b64url\(s\) \{([\s\S]*?)\n\}/.exec(code);
+    expect(decoder).not.toBeNull();
+    expect(decoder![1]).toContain("Buffer.from(s, 'base64url')");
+    expect(decoder![1]).not.toMatch(/\b(for|while)\b/);
+  });
+
+  it("routes a real-sized bearer (16 orgs with names and roles, accents included)", async () => {
+    const orgs = Array.from({ length: 15 }, (_, i) => `${String(i).padStart(8, "0")}-1d2e-4f3a-9b8c-7d6e5f4a3b2c`);
+    const ids = [ORG_CA, ...orgs];
+    const auth = bearer({
+      iss: "https://dilaya.eu/oauth/connect",
+      sub: "ccc06923-fc0b-4962-b0d0-b842be6a604c",
+      email: "someone@example.com",
+      org_ids: ids,
+      orgs: ids.map((id) => ({ id, name: `Société ${id.slice(0, 8)}`, role: "owner" })),
+    });
+    expect(auth.length).toBeGreaterThan(2000);
+    const { handler, cf } = makeViewer(code, Object.fromEntries(ids.map((id) => [id, CA])));
+    const out = await handler(viewerEvent({ auth }));
+    expect(out.headers["x-dilaya-route"].value).toBe("token");
+    expect(cf.origin).toEqual({ domainName: ORIGINS[CA] });
+  });
+
   it("is plain ES5-ish code for the JS 2.0 runtime: no await inside a call argument", () => {
     expect(code).not.toMatch(/\(\s*await\b/);
     expect(code).not.toMatch(/^\s*\/\//m);
