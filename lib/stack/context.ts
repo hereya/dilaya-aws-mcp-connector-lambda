@@ -64,6 +64,8 @@ export interface StackContext {
   expectedAudience: string;
   mcpDomain: string | undefined;
   originDomain: string | undefined;
+  /** An extra origin host a primary pod owns next to its public names (pod-topology.ts). */
+  originAlias: string | undefined;
   skipGlobalResources: boolean;
   /** The region router's edge (region-router/config.ts); undefined → none. */
   regionRouter: RegionRouterConfig | undefined;
