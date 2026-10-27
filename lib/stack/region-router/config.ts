@@ -25,7 +25,9 @@
  *   regionRouterEdgeVersionArn   a published Lambda@Edge VERSION (us-east-1) — passed in like the
  *                                us-east-1 certs: this stack lives in the pod's region and the
  *                                package's single-stack deploy cannot create it (edge-stack.ts).
- *                                Absent → no body routing: mixed-region tokens go home
+ *                                Absent (the chosen shape, step-5 trial 27/10/2026: any origin-request
+ *                                Lambda@Edge costs +64 ms on EVERY request) → mixed-region tokens go
+ *                                home and the home connector relays (REGION_ROUTER_ORIGINS)
  *   regionRouterOriginSecret     stamped by the distribution as x-dilaya-region-verify; a pod that
  *                                has it (primary OR secondary) honours x-dilaya-viewer-host — and
  *                                only when the request proves the secret (pod-trust.ts)

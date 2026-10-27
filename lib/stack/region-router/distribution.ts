@@ -30,6 +30,12 @@ export function createRegionRouter(stack: cdk.Stack, ctx: StackContext): void {
     comment: "org id -> region (region router, t_rca_p1_router)",
   });
   ctx.fn.addEnvironment("REGION_ROUTER_KVS_ARN", kvs.keyValueStoreArn);
+  // Where the HOME connector relays a mixed-region token's call to a foreign org
+  // (dilaya-connector src/region-router/relay.ts) — the edge no longer reads bodies.
+  ctx.fn.addEnvironment(
+    "REGION_ROUTER_ORIGINS",
+    Object.entries(rr.origins).map(([region, host]) => `${region}:${host}`).join(",")
+  );
   ctx.fn.addToRolePolicy(
     new iam.PolicyStatement({
       actions: [
