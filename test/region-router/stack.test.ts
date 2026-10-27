@@ -33,6 +33,11 @@ describe("region router: the pod stack", () => {
     expect(b.FunctionAssociations[0].EventType).toBe("viewer-request");
     expect(b.LambdaFunctionAssociations).toBeUndefined();
     expect(res(t, "AWS::CloudFront::KeyValueStore")).toHaveLength(1);
+    // The home connector learns where to relay a mixed-region token's foreign-org call.
+    const conn = res(t, "AWS::Lambda::Function").find((f) => f.Properties.Environment?.Variables?.REGION_ROUTER_KVS_ARN);
+    expect(conn.Properties.Environment.Variables.REGION_ROUTER_ORIGINS).toBe(
+      Object.entries(ORIGINS).map(([r, h]) => `${r}:${h}`).join(",")
+    );
     const names = res(t, "AWS::Route53::RecordSet").map((r) => r.Properties.Name);
     expect(names).not.toContain("app.dilaya.eu.");
     expect(names).not.toContain("mcp.dilaya.eu.");
