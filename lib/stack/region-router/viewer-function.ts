@@ -27,24 +27,15 @@ const kvs = cf.kvs();
 var ORIGINS = ${JSON.stringify(origins)};
 var HOME = ${JSON.stringify(home)};
 var MAX_ORGS = ${MAX_TOKEN_ORGS};
-var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 var ORG_RE = /^[A-Za-z0-9-]{1,64}$/;
-// base64url -> binary string. Hand-written: it is the same code in the edge
-// runtime and in the test harness, and depends on no runtime built-in.
+// base64url -> text with the runtime's NATIVE decoder. Never a hand-written
+// per-character loop: the 27/10 cutover died on one — a real bearer (~0.5-3 KB of
+// payload) blew the Functions instruction cap ("RangeError: Instruction limit
+// exceeded" -> 503 FunctionExecutionError, the call never reached a pod), while the
+// trial's tiny fake tokens passed. Measured with test-function: 6-25 % compute up
+// to 40 orgs, against 88 % to over 100 % for the loop.
 function b64url(s) {
-  var out = '', buf = 0, bits = 0;
-  for (var i = 0; i < s.length; i++) {
-    var v = B64.indexOf(s.charAt(i));
-    if (v < 0) return null;
-    buf = (buf << 6) | v;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      out += String.fromCharCode((buf >> bits) & 255);
-      buf = buf & ((1 << bits) - 1);
-    }
-  }
-  return out;
+  return Buffer.from(s, 'base64url').toString('utf8');
 }
 // The org ids a bearer CLAIMS (org_ids, a legacy single orgId, or the "org" claim of
 // dilaya.eu's org-events assertion). Unverified.
