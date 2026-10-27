@@ -46,6 +46,8 @@ export interface RegionRouterConfig {
   certArn: string;
   edgeVersionArn: string | undefined;
   originSecret: string;
+  /** regionRouterPublicDns=true: the public names' DNS points at the distribution (the cutover). */
+  publicDns: boolean;
 }
 
 const REGION_RE = /^[a-z]{2}(-[a-z]+)+-\d$/;
@@ -86,7 +88,7 @@ export function readRegionRouter(
     throw new Error("regionRouterOriginSecret must be 32-256 printable ASCII characters, without '='");
   }
   if (env["regionRouter"] !== "true") {
-    for (const k of ["regionRouterOrigins", "regionRouterCertArn", "regionRouterEdgeVersionArn"]) {
+    for (const k of ["regionRouterOrigins", "regionRouterCertArn", "regionRouterEdgeVersionArn", "regionRouterPublicDns"]) {
       if (env[k]) throw new Error(`${k} is set but regionRouter is not "true"`);
     }
     return { config: undefined, originSecret };
@@ -105,7 +107,14 @@ export function readRegionRouter(
     throw new Error("regionRouterEdgeVersionArn must be a numbered us-east-1 Lambda version ARN");
   }
   return {
-    config: { home: Object.keys(origins)[0], origins, certArn, edgeVersionArn, originSecret },
+    config: {
+      home: Object.keys(origins)[0],
+      origins,
+      certArn,
+      edgeVersionArn,
+      originSecret,
+      publicDns: env["regionRouterPublicDns"] === "true",
+    },
     originSecret,
   };
 }

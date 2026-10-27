@@ -152,6 +152,11 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   const rr = readRegionRouter(process.env, customDomain, mcpDomain, skipGlobalResources);
   ctx.regionRouter = rr.config;
   ctx.regionRouterOriginSecret = rr.originSecret;
+  if (rr.config?.publicDns && originDomain) {
+    throw new Error(
+      "regionRouterPublicDns needs a pod that owns the public names: use originAlias, not originDomain"
+    );
+  }
 
   ctx.appContentCertArn = appContentCertArn;
   ctx.appContentDomain = appContentDomain;

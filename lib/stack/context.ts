@@ -71,6 +71,8 @@ export interface StackContext {
   regionRouter: RegionRouterConfig | undefined;
   /** Pod side: honour x-dilaya-viewer-host when the request proves this secret. */
   regionRouterOriginSecret: string | undefined;
+  /** The router distribution's *.cloudfront.net name, set by distribution.ts (public-dns.ts reads it). */
+  regionRouterDistributionDomain?: string;
   frontendForwardHeaders: string[];
 
   // --- hereyaProjectEnv, split three ways ---

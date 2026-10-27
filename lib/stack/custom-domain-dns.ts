@@ -5,6 +5,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import type { StackContext } from "./context";
+import { publicAliasTarget } from "./region-router/public-dns";
 
 export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void {
   const { fn, httpApi } = ctx;
@@ -43,6 +44,7 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
   // API Gateway custom domain for MCP (exact domain). With originDomain
   // (pod-topology.ts) the pod owns its ORIGIN host instead of the public one.
   const ownedDomain = ctx.originDomain ?? customDomain;
+  const publicTarget = (t: route53.IAliasRecordTarget) => (ctx.originDomain ? t : publicAliasTarget(ctx, t));
   const domainName = new apigwv2.DomainName(stack, "DomainName", {
     domainName: ownedDomain,
     certificate,
@@ -57,10 +59,10 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
     zone: hostedZone,
     recordName: ownedDomain,
     target: route53.RecordTarget.fromAlias(
-      new targets.ApiGatewayv2DomainProperties(
+      publicTarget(new targets.ApiGatewayv2DomainProperties(
         domainName.regionalDomainName,
         domainName.regionalHostedZoneId
-      )
+      ))
     ),
   });
 
@@ -81,10 +83,10 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
       zone: hostedZone,
       recordName: ctx.mcpDomain,
       target: route53.RecordTarget.fromAlias(
-        new targets.ApiGatewayv2DomainProperties(
+        publicAliasTarget(ctx, new targets.ApiGatewayv2DomainProperties(
           mcpDomainName.regionalDomainName,
           mcpDomainName.regionalHostedZoneId
-        )
+        ))
       ),
     });
   }

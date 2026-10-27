@@ -12,9 +12,10 @@ import { viewerFunctionCode } from "./viewer-function";
 /**
  * The region router's edge (config.ts says what it is for). Inert unless `regionRouter=true`.
  *
- * Creates NO DNS record: pointing app.dilaya.eu / mcp.<zone> at this distribution is the CUTOVER,
- * a separate, explicit step (the pod must first serve its own origin host — originDomain). Until
- * then the distribution answers only on its *.cloudfront.net name.
+ * Creates NO DNS record of its own: pointing app.dilaya.eu / mcp.<zone> at this distribution is the
+ * CUTOVER, `regionRouterPublicDns=true` (public-dns.ts — the pod's existing public records switch
+ * their alias target in place; the pod must serve its origin host first, originAlias). Until then
+ * the distribution answers only on its *.cloudfront.net name.
  *
  * The KVS starts EMPTY, and an org with no key routes HOME: the day it is switched on, every
  * request goes exactly where it goes today. The CONNECTOR fills it (t_rca_p1_router lot 2,
@@ -94,6 +95,7 @@ export function createRegionRouter(stack: cdk.Stack, ctx: StackContext): void {
     },
   });
 
+  ctx.regionRouterDistributionDomain = distribution.distributionDomainName;
   new cdk.CfnOutput(stack, "RegionRouterDistributionDomain", { value: distribution.distributionDomainName });
   new cdk.CfnOutput(stack, "RegionRouterKvsArn", { value: kvs.keyValueStoreArn });
 }

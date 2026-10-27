@@ -537,6 +537,11 @@ distributions still need per-org origin routing.
 
 ## Region router: one public URL in front of every pod (t_rca_p1_router, 0.1.118)
 
+**The cutover (0.1.126): `regionRouterPublicDns=true`** — the pod's own `customDomain` / `mcp.<zone>`
+records alias the router's distribution instead of API Gateway, in place (same logical ids; removing the
+flag rolls back the same way). API Gateway domains stay. Needs `regionRouter=true` + `originAlias`
+(refused with `originDomain`). `lib/stack/region-router/public-dns.ts`.
+
 The front door of Région Canada (`lib/stack/region-router/`). **Off unless `regionRouter=true`;
 absent, the template is byte-identical to 0.1.117** (golden a–e + the release.yml synth).
 
