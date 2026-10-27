@@ -16,6 +16,12 @@
  *     so the pod creates NEITHER the customDomain NOR the mcp.<zone>
  *     domain/record. The app-content edge (if any) fronts this origin.
  *
+ * `originAlias` (t_rca_p1_router step 5) is the PRIMARY pod's origin host
+ * (e.g. app-eu.dilaya.eu, the region router's home origin) owned NEXT TO the
+ * public names, not instead of them: `originDomain` would drop app.dilaya.eu
+ * and mcp.<zone> on deploy, before the DNS switch. With the alias the cutover is
+ * a DNS change, reversible in a minute.
+ *
  * `skipGlobalResources=true` marks a SECONDARY pod: one that must not recreate
  * anything that exists once per account (global CloudFront names, us-east-1
  * certs, account-wide DNS names, BYOD distribution rewrites). It requires
@@ -26,6 +32,7 @@
  */
 export interface PodTopology {
   originDomain: string | undefined;
+  originAlias: string | undefined;
   skipGlobalResources: boolean;
 }
 
@@ -37,6 +44,7 @@ export function readPodTopology(
 ): PodTopology {
   const originDomain = env["originDomain"] || undefined;
   const skipGlobalResources = env["skipGlobalResources"] === "true";
+  const originAlias = env["originAlias"] || undefined;
 
   if (originDomain) {
     if (!customDomain || !customDomainZone) {
@@ -55,6 +63,21 @@ export function readPodTopology(
     }
   }
 
+  if (originAlias) {
+    if (originDomain) {
+      throw new Error("originAlias is for a pod that owns its public names; with originDomain the pod already owns only its origin host");
+    }
+    if (!customDomain || !customDomainZone) {
+      throw new Error("originAlias requires customDomain (the public name it stands next to)");
+    }
+    if (originAlias === customDomain || originAlias === mcpDomain) {
+      throw new Error(`originAlias must differ from the public names; got ${originAlias}`);
+    }
+    if (!originAlias.endsWith(`.${customDomainZone}`)) {
+      throw new Error(`originAlias (${originAlias}) must sit in the customDomain zone ${customDomainZone}`);
+    }
+  }
+
   if (skipGlobalResources) {
     if (!originDomain) {
       throw new Error(
@@ -70,5 +93,5 @@ export function readPodTopology(
     }
   }
 
-  return { originDomain, skipGlobalResources };
+  return { originDomain, originAlias, skipGlobalResources };
 }

@@ -166,9 +166,10 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
       new cdk.CfnOutput(this, "ServiceUrl", {
         value: `https://${customDomain}`,
       });
-      if (ctx.originDomain) {
+      const ownedOrigin = ctx.originDomain ?? ctx.originAlias;
+      if (ownedOrigin) {
         new cdk.CfnOutput(this, "OriginUrl", {
-          value: `https://${ctx.originDomain}`,
+          value: `https://${ownedOrigin}`,
         });
       }
     } else {

@@ -109,6 +109,27 @@ export function createCustomDomainDns(stack: cdk.Stack, ctx: StackContext): void
   // as apps/orgs are added. Entire feature is gated on `appContentDomain`.
   // -------------------------------------------------------------------
 
+  // The primary pod's origin host NEXT TO the public names (originAlias,
+  // pod-topology.ts): the region router's home origin. Additive only — the
+  // resources above keep their logical ids, so adding it replaces nothing.
+  if (ctx.originAlias) {
+    const aliasDomainName = new apigwv2.DomainName(stack, "OriginAliasDomainName", {
+      domainName: ctx.originAlias,
+      certificate,
+    });
+    new apigwv2.ApiMapping(stack, "OriginAliasApiMapping", { api: httpApi, domainName: aliasDomainName });
+    new route53.ARecord(stack, "OriginAliasRecord", {
+      zone: hostedZone,
+      recordName: ctx.originAlias,
+      target: route53.RecordTarget.fromAlias(
+        new targets.ApiGatewayv2DomainProperties(
+          aliasDomainName.regionalDomainName,
+          aliasDomainName.regionalHostedZoneId
+        )
+      ),
+    });
+  }
+
   ctx.certificate = certificate;
   ctx.domainName = domainName;
   ctx.hostedZone = hostedZone;

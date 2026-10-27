@@ -483,6 +483,10 @@ public URL `app.dilaya.eu/mcp`; a front door (P1) routes each org to its pod's o
 optional inputs (`lib/stack/pod-topology.ts`) prepare that. **Absent, the template is byte-identical
 to 0.1.116** (golden profiles a–d unchanged, plus a prod-like synth).
 
+- **`originAlias`** (0.1.124, e.g. `app-eu.dilaya.eu`): the PRIMARY pod's origin host, owned NEXT TO
+  `customDomain` / `mcp.<zone>` (they are kept) — the region router's home origin. `originDomain` would
+  drop the public names on deploy; the alias makes the switch to the router a reversible DNS change.
+  Refused with `originDomain`. Output `OriginUrl`.
 - **`originDomain`** (e.g. `ca.app.dilaya.eu`): the only API Gateway custom domain + Route 53 record
   the pod creates (in the `customDomain` zone; `wildcardCertificateArn` must be a cert **of the
   pod's region** covering it — `*.dilaya.eu` does not cover a two-label name like
