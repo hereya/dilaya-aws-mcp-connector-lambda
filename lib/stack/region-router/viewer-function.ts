@@ -1,8 +1,18 @@
 import { stripCommentLines } from "../app-content/router-stop-pages";
 import { ORG_REGIONS_HEADER, ROUTE_HEADER, VIEWER_HOST_HEADER } from "./config";
 
-/** At most this many orgs of one token are looked up (one KVS read each). */
+/** At most this many orgs of one token are looked up (one KVS read each, on the fallback path). */
 export const MAX_TOKEN_ORGS = 16;
+
+/**
+ * The SUMMARY key the connector keeps (dilaya-connector src/region-router/away.ts, the format is
+ * its, byte for byte): "-" nobody away, "org:region,…" the orgs living outside HOME, "*" too many
+ * for one KVS value. t_rca_router_cost, 29/10/2026: in prod the function cost 2-5x what
+ * test-function shows, and a bearer meant one sequential kvs.get per org (up to 16) — hourly max
+ * 94 % of the compute cap. With the key, ONE read routes any bearer. "_" is outside ORG_RE, so the
+ * key can never be an org id.
+ */
+export const AWAY_KEY = "__away";
 
 /**
  * The viewer-request CloudFront Function's SOURCE, comments included — `viewerFunctionCode()`
@@ -63,6 +73,21 @@ function queryOrg(request) {
   var st = q.state ? /^([A-Za-z0-9-]{1,64})\.[A-Za-z0-9-]{1,64}$/.exec(q.state.value) : null;
   return st ? st[1] : '';
 }
+// The away orgs in ONE read: {} when nobody is away, null when the summary is
+// absent (older connector), "*" (too many) or unreadable -> one read per org.
+async function awayMap() {
+  var v;
+  try { v = await kvs.get('${AWAY_KEY}'); } catch (e) { return null; }
+  if (v === '-') return {};
+  if (typeof v !== 'string' || v === '*') return null;
+  var m = {};
+  var parts = v.split(',');
+  for (var i = 0; i < parts.length; i++) {
+    var j = parts[i].lastIndexOf(':');
+    if (j > 0) m[parts[i].slice(0, j)] = parts[i].slice(j + 1);
+  }
+  return m;
+}
 // Unknown org (no KVS key) or a region this distribution has no origin for -> HOME.
 async function regionOf(org) {
   var r;
@@ -86,11 +111,13 @@ async function handler(event) {
     region = await regionOf(qo);
   } else {
     var orgs = orgsOf(h);
+    var map = orgs.length > 0 ? await awayMap() : null;
     var seen = {};
     var n = 0;
     var away = [];
     for (var i = 0; i < orgs.length; i++) {
-      var r = await regionOf(orgs[i]);
+      var r = HOME;
+      if (map) { if (ORIGINS[map[orgs[i]]]) r = map[orgs[i]]; } else { r = await regionOf(orgs[i]); }
       if (!seen[r]) { seen[r] = 1; n++; region = r; }
       if (r !== HOME) away.push(orgs[i] + ':' + r);
     }

@@ -111,7 +111,9 @@ describe("region router: the viewer function (token / path → region)", () => {
       has: (_t, k) => (reads.push(String(k)), false),
     }));
     await spy.handler(viewerEvent({ auth: bearer({ org_ids: many }) }));
-    expect(reads).toHaveLength(16);
+    // The summary key first (absent here → the per-org fallback), then at most 16 orgs.
+    expect(reads[0]).toBe("__away");
+    expect(reads.slice(1)).toHaveLength(16);
   });
 
   // 27/10/2026: the hand-written base64url loop exceeded the CloudFront Functions instruction
