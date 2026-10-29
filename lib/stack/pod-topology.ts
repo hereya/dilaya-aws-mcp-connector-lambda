@@ -55,6 +55,9 @@ export function readPodTopology(
   const originAlias = env["originAlias"] || undefined;
   const appContentHostKvsArn = env["appContentHostKvsArn"] || undefined;
   if (appContentHostKvsArn) checkConsumer(env, appContentHostKvsArn, skipGlobalResources);
+  else if (env["appContentByodEdge"]) {
+    throw new Error("appContentByodEdge is for a consumer pod (appContentHostKvsArn): a primary wires its own BYOD edge");
+  }
 
   if (originDomain) {
     if (!customDomain || !customDomainZone) {
@@ -118,6 +121,9 @@ function checkConsumer(env: NodeJS.ProcessEnv, arn: string, secondary: boolean):
   }
   if (!env["appContentDomain"] || !env["appContentZoneId"]) {
     throw new Error("appContentHostKvsArn requires appContentDomain and appContentZoneId (the primary's content domain and its zone)");
+  }
+  if (env["appContentByodEdge"] && !env["appContentOriginSecret"]) {
+    throw new Error("appContentByodEdge requires appContentOriginSecret: a BYOD distribution without the origin-lock header is refused by every authorizer");
   }
   for (const k of ["appContentCertArn", "appContentRegionOrigins", "domainPurchase"]) {
     if (env[k]) throw new Error(`${k} belongs to the primary pod's edge and cannot be set on a consumer pod (appContentHostKvsArn)`);

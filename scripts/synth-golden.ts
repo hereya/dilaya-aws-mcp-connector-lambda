@@ -53,11 +53,7 @@ const BASE_PROJECT_ENV = {
   IAM_POLICY_sqlite: POLICY,
 };
 
-const COGNITO_ENV = {
-  userPoolId: "eu-west-1_ABCDEFGHI",
-  userPoolClientId: "1h57kf5cpq17m0eml12example",
-  awsCognitoRegion: "eu-west-1",
-};
+const COGNITO_ENV = { userPoolId: "eu-west-1_ABCDEFGHI", userPoolClientId: "1h57kf5cpq17m0eml12example", awsCognitoRegion: "eu-west-1" };
 
 type Profile = { name: string; env: Record<string, string>; layer: boolean };
 
@@ -193,6 +189,9 @@ const profiles: Profile[] = [
     },
   },
 ];
+// I — H plus the BYOD control plane of its orgs' custom domains (lib/stack/app-content/byod-edge.ts).
+profiles.push({ ...profiles[7]!, name: "i-secondary-pod-appcontent-consumer-byod", env: { ...profiles[7]!.env, appContentByodEdge:
+  "eu-apphost-router:aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb:cccccccc-4444-4555-8666-dddddddddddd:E1ABCDEFGHIJKL:eu-static.s3.eu-west-1.amazonaws.com:eu-edge-logs.s3.eu-west-1.amazonaws.com:app-eu.example.eu" } });
 
 const KEYS = [
   "hereyaProjectRootDir", "oauthServerUrl", "hereyaProjectEnv", "organizationId", "memorySize", "timeout", "handler",
@@ -202,7 +201,7 @@ const KEYS = [
   "telegramChatId", "alarmInboxOrg", "alarmInboxApp", "originDomain", "skipGlobalResources", "regionRouter",
   "regionRouterOrigins", "regionRouterCertArn", "regionRouterEdgeVersionArn", "regionRouterOriginSecret",
   "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain", "globalRegistryTableArn",
-  "appContentHostKvsArn", "appContentRegionOrigins"];
+  "appContentHostKvsArn", "appContentRegionOrigins", "appContentByodEdge"];
 
 for (const p of profiles) {
   for (const k of KEYS) delete process.env[k];

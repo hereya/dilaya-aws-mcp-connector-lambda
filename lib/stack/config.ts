@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib/core";
 import type { StackContext } from "./context";
 import { readPodTopology } from "./pod-topology";
+import { parseByodEdge } from "./app-content/byod-edge";
 import { readRegionRouter } from "./region-router/config";
 
 export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
@@ -150,6 +151,8 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   ctx.originAlias = originAlias;
   ctx.skipGlobalResources = skipGlobalResources;
   ctx.appContentHostKvsArn = appContentHostKvsArn;
+  const byodEdge = parseByodEdge(process.env["appContentByodEdge"] || undefined);
+  if (byodEdge) ctx.appContentByodEdge = byodEdge;
   const rr = readRegionRouter(process.env, customDomain, mcpDomain, skipGlobalResources);
   ctx.regionRouter = rr.config;
   ctx.regionRouterOriginSecret = rr.originSecret;

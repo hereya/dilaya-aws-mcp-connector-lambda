@@ -14,6 +14,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import type { RegionRouterConfig } from "./region-router/config";
+import type { ByodEdge } from "./app-content/byod-edge";
 
 /**
  * One secret:// entry of `hereyaProjectEnv`, resolved into a real Secret.
@@ -69,6 +70,8 @@ export interface StackContext {
   skipGlobalResources: boolean;
   /** Secondary pod consuming the primary's app-content edge (pod-topology.ts); undefined → not. */
   appContentHostKvsArn: string | undefined;
+  /** The primary's BYOD edge ids on a consumer pod (app-content/byod-edge.ts); undefined → no BYOD there. */
+  appContentByodEdge?: ByodEdge;
   /** The region router's edge (region-router/config.ts); undefined → none. */
   regionRouter: RegionRouterConfig | undefined;
   /** Pod side: honour x-dilaya-viewer-host when the request proves this secret. */
