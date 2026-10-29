@@ -57,13 +57,29 @@ describe("secondary pod: global registry + cross-region static secrets", () => {
 
   it("grants the EU table ONLY on the two global partitions (LeadingKeys), never Scan", () => {
     const t = synth({ ...CA, skipGlobalResources: "true", globalRegistryTableArn: EU_TABLE });
-    const onEu = statements(t).filter((s) => JSON.stringify(s.Resource) === JSON.stringify(EU_TABLE));
+    const onEu = statements(t).filter((s) => JSON.stringify(s.Resource) === JSON.stringify(EU_TABLE) && s.Condition?.["ForAllValues:StringEquals"]?.["dynamodb:LeadingKeys"]);
     expect(onEu).toHaveLength(1);
     expect(onEu[0].Condition).toEqual({
       "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["_hosts", "_catalog"] },
     });
     expect(onEu[0].Action).not.toContain("dynamodb:Scan");
     expect(onEu[0].Action).toEqual(expect.arrayContaining(["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"]));
+  });
+
+  it("the only other grant on the EU table: a key-only GetItem (an org row EXISTS, never its content)", () => {
+    const t = synth({ ...CA, skipGlobalResources: "true", globalRegistryTableArn: EU_TABLE });
+    const onEu = statements(t).filter((s) => JSON.stringify(s.Resource) === JSON.stringify(EU_TABLE));
+    expect(onEu).toHaveLength(2);
+    const keyOnly = onEu.find((s) => !s.Condition?.["ForAllValues:StringEquals"]?.["dynamodb:LeadingKeys"]);
+    expect(keyOnly).toEqual({
+      Action: "dynamodb:GetItem",
+      Effect: "Allow",
+      Resource: EU_TABLE,
+      Condition: {
+        "ForAllValues:StringEquals": { "dynamodb:Attributes": ["org_id", "sk"] },
+        StringEqualsIfExists: { "dynamodb:Select": "SPECIFIC_ATTRIBUTES" },
+      },
+    });
   });
 
   it("grants GetParameter on the exact cross-region SSM ARN left unresolved, + KMS via SSM in ITS region", () => {

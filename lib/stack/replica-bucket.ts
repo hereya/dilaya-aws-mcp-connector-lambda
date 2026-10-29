@@ -8,9 +8,15 @@ import type { StackContext } from "./context";
  * Litestream replica (`<org>/<app>/app.db/…`) from the EU bucket to the CA one
  * over the admin-peer channel (connector src/region-migrate/copy/):
  *
- *   PRIMARY pod (the source; also a single-region deployment) — READ ONLY:
+ *   PRIMARY pod (the source; also a single-region deployment):
  *     ListObjectsV2 (s3:ListBucket) + GetObject / HeadObject (s3:GetObject),
- *     then streams the bytes to URLs the target presigned.
+ *     then streams the bytes to URLs the target presigned;
+ *     and the PURGE of a moved-away org (connector src/region-migrate/purge/):
+ *     a server-side CopyObject of each replica object to `_archive/orgpurge/…`
+ *     (s3:PutObject on that prefix only), then an expiry tag on the original
+ *     (s3:PutObjectTagging) — the bucket's lifecycle rules (dilaya/aws-sqlite-data)
+ *     do the deletion; the connector checks them first (s3:GetLifecycleConfiguration).
+ *     No s3:DeleteObject on the primary.
  *   SECONDARY pod (the target) — its own bucket:
  *     ListObjectsV2 (s3:ListBucket) to diff what it holds;
  *     HeadObject (s3:GetObject) on a MULTIPART object only, to read the source
@@ -38,11 +44,22 @@ export function grantReplicaBucket(_stack: cdk.Stack, ctx: StackContext): void {
 
 /** The statements, per pod role (exported for the tests). */
 export function replicaBucketStatements(bucketArn: string, secondary: boolean): iam.PolicyStatement[] {
-  const list = new iam.PolicyStatement({ actions: ["s3:ListBucket"], resources: [bucketArn] });
-  const objects = secondary
-    ? ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
-    : ["s3:GetObject"];
-  return [list, new iam.PolicyStatement({ actions: objects, resources: [`${bucketArn}/*`] })];
+  if (secondary) {
+    return [
+      new iam.PolicyStatement({ actions: ["s3:ListBucket"], resources: [bucketArn] }),
+      new iam.PolicyStatement({
+        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+        resources: [`${bucketArn}/*`],
+      }),
+    ];
+  }
+  return [
+    new iam.PolicyStatement({ actions: ["s3:ListBucket", "s3:GetLifecycleConfiguration"], resources: [bucketArn] }),
+    new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObjectTagging"], resources: [`${bucketArn}/*`] }),
+    new iam.PolicyStatement({ actions: ["s3:PutObject"], resources: [`${bucketArn}/${ARCHIVE_PREFIX}*`] }),
+  ];
 }
 
 const BUCKET_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+/** Where the purge archives a moved-away org's replicas (connector purge/types.ts ARCHIVE_PREFIX). */
+export const ARCHIVE_PREFIX = "_archive/orgpurge/";

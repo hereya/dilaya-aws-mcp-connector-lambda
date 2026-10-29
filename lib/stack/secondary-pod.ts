@@ -13,7 +13,10 @@ import type { StackContext } from "./context";
  * carries GLOBAL_REGISTRY_TABLE_ARN support, t_rca_p1_router B1) reaches
  * them cross-region through `GLOBAL_REGISTRY_TABLE_ARN`; its org/app rows stay
  * in the pod's own registry. The grant is pinned by `dynamodb:LeadingKeys` to
- * those two partitions: this pod can never read or write an EU org's rows.
+ * those two partitions — plus one key-only, read-only GetItem (connector
+ * src/authz/org-elsewhere.ts): before creating a new org, the connector checks
+ * that the primary registry does not already hold it. `dynamodb:Attributes`
+ * limited to the key attributes, `dynamodb:Select` SPECIFIC_ATTRIBUTES.
  * `POD_ROLE=secondary` turns off the connector's sweeps that mutate
  * once-per-account resources (edge host map, edge usage, domain watch).
  *
@@ -49,6 +52,16 @@ export function wireSecondaryPod(stack: cdk.Stack, ctx: StackContext): void {
         },
       })
     );
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem"],
+        resources: [tableArn],
+        conditions: {
+          "ForAllValues:StringEquals": { "dynamodb:Attributes": [...KEY_ATTRIBUTES] },
+          StringEqualsIfExists: { "dynamodb:Select": "SPECIFIC_ATTRIBUTES" },
+        },
+      })
+    );
   }
 
   const ssmArns = crossRegionSsmArns(ctx.nonPolicyEnv, stack.region);
@@ -69,6 +82,8 @@ export function wireSecondaryPod(stack: cdk.Stack, ctx: StackContext): void {
 
 /** The two registry partitions that exist once for the whole platform. */
 export const GLOBAL_PARTITIONS = ["_hosts", "_catalog"] as const;
+/** The registry's key attributes: all the existence check may read of any EU row. */
+export const KEY_ATTRIBUTES = ["org_id", "sk"] as const;
 
 const TABLE_ARN_RE = /^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\d{12}:table\/[A-Za-z0-9_.-]{3,255}$/;
 const SSM_ARN_RE = /^(?:secret:\/\/)?(?:aws:)?(arn:aws[a-z-]*:ssm:([a-z0-9-]+):\d{12}:parameter\/[\w./-]+)$/;
