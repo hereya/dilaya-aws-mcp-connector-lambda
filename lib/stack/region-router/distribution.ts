@@ -6,6 +6,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { CLOUDFRONT_FUNCTION_MAX_BYTES } from "../app-content/router-stop-pages";
 import type { StackContext } from "../context";
+import { createRegionRouterAlarms } from "./alarms";
 import { REGION_VERIFY_HEADER } from "./config";
 import { viewerFunctionCode } from "./viewer-function";
 
@@ -94,6 +95,8 @@ export function createRegionRouter(stack: cdk.Stack, ctx: StackContext): void {
       edgeLambdas,
     },
   });
+
+  createRegionRouterAlarms(stack, ctx, { distributionId: distribution.distributionId, functionName: viewerFn.functionName });
 
   ctx.regionRouterDistributionDomain = distribution.distributionDomainName;
   new cdk.CfnOutput(stack, "RegionRouterDistributionDomain", { value: distribution.distributionDomainName });
