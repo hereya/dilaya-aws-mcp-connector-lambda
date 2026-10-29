@@ -57,6 +57,7 @@ import { createFilesDomain } from "./stack/files-domain";
 import { createRegionRouter } from "./stack/region-router/distribution";
 import { applyPodTrust } from "./stack/region-router/pod-trust";
 import { wireSecondaryPod } from "./stack/secondary-pod";
+import { grantReplicaBucket } from "./stack/replica-bucket";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -204,5 +205,8 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // inert when absent; when on, new resources, outputs and one env var.
     applyPodTrust(this, ctx);
     createRegionRouter(this, ctx);
+
+    // Région CA P2 lot 3, last: two role statements appended, nothing re-ordered.
+    grantReplicaBucket(this, ctx);
   }
 }
