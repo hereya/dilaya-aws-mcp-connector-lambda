@@ -3,6 +3,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import type { StackContext } from "../context";
 import { createStaticAssetsBucket } from "./static-assets";
 import { createOriginSecretParam } from "./origin-restamp";
+import { consumeByodControlPlane } from "./byod-edge";
 
 /**
  * A SECONDARY pod that CONSUMES the primary's app-content edge (Région Canada,
@@ -12,7 +13,7 @@ import { createOriginSecretParam } from "./origin-restamp";
  *
  * The edge exists ONCE per account and stays the primary's: the `*.<domain>`
  * distribution, its router function, the host-map KVS, the wildcard cert and
- * DNS, the DMARC record, the BYOD grants, the origin re-stamp trigger. This pod
+ * DNS, the DMARC record, the origin re-stamp trigger. This pod
  * gets only what serving its own orgs' sites through that edge needs:
  *   - its OWN static-assets bucket (the primary's router reaches it by OAC for
  *     a host whose KVS value carries this region, router-region.ts) — its
@@ -27,6 +28,10 @@ import { createOriginSecretParam } from "./origin-restamp";
  *     `appContentOriginSecret`, the origin lock + its rotation memory: the
  *     primary's edge stamps the same secret on the requests it sends here;
  *   - the shared login-code sender on the auth Lambda.
+ *   - with `appContentByodEdge` (t_rca_byod_ca), the BYOD control plane for its
+ *     orgs' custom domains: the primary's BYOD grants + edge ids, so a
+ *     distribution created here is the same account resource the primary
+ *     would create (byod-edge.ts). Without it the BYOD tools stay off here.
  * Absent `appContentHostKvsArn` → never called: every existing template is unchanged.
  */
 export function consumeAppContentEdge(stack: cdk.Stack, ctx: StackContext): void {
@@ -75,6 +80,8 @@ export function consumeAppContentEdge(stack: cdk.Stack, ctx: StackContext): void
   ctx.authLambdaFn?.addEnvironment("OTP_SENDER_DOMAIN", appContentDomain);
 
   if (ctx.appContentOriginSecret) createOriginSecretParam(stack, ctx);
+  // Custom domains of this pod's orgs (t_rca_byod_ca), only with appContentByodEdge.
+  if (ctx.appContentByodEdge) consumeByodControlPlane(stack, ctx);
 
   new cdk.CfnOutput(stack, "AppContentRegionOrigin", {
     description: "This pod's entry for the primary's appContentRegionOrigins",
