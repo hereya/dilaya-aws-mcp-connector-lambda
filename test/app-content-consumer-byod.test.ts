@@ -100,6 +100,29 @@ describe("consumer pod with the BYOD control plane (appContentByodEdge)", () => 
     }
   });
 
+  it("can write records into a Dilaya-held zone — the primary's exact grant — but never buy", () => {
+    const st = statements(synth({ ...CA, appContentByodEdge: EDGE }));
+    const write = st.filter((s) => s.Resource === "arn:aws:route53:::hostedzone/*");
+    expect(write).toHaveLength(1);
+    expect(actions(write[0]).sort()).toEqual([
+      "route53:ChangeResourceRecordSets",
+      "route53:GetHostedZone",
+      "route53:ListResourceRecordSets",
+    ]);
+    expect(write[0].Condition).toBeUndefined();
+    // Without the BYOD edge: only the content zone, never the wildcard.
+    expect(JSON.stringify(statements(synth(CA)))).not.toContain("hostedzone/*");
+  });
+
+  it("holds the same record-write statement as a primary with domainPurchase", () => {
+    const { appContentHostKvsArn: _k, skipGlobalResources: _s, originDomain: _o, appContentOriginSecret: _x, ...primary } = CA;
+    const eu = statements(
+      synth({ ...primary, appContentCertArn: "arn:aws:acm:us-east-1:123456789012:certificate/y", domainPurchase: "true" })
+    ).filter((s) => s.Resource === "arn:aws:route53:::hostedzone/*");
+    const ca = statements(synth({ ...CA, appContentByodEdge: EDGE })).filter((s) => s.Resource === "arn:aws:route53:::hostedzone/*");
+    expect(ca).toEqual(eu);
+  });
+
   it("creates no edge resource either", () => {
     const t = synth({ ...CA, appContentByodEdge: EDGE });
     for (const type of ["AWS::CloudFront::Distribution", "AWS::CloudFront::Function", "AWS::CloudFront::CachePolicy"]) {

@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib/core";
 import * as iam from "aws-cdk-lib/aws-iam";
 import type { StackContext } from "../context";
 import { grantByodDistributions } from "./byod-iam";
+import { ownedZoneRecordsStatement } from "./domain-purchase-iam";
 
 /**
  * The BYOD control plane on a CONSUMER pod (Région Canada, t_rca_byod_ca).
@@ -28,7 +29,9 @@ import { grantByodDistributions } from "./byod-iam";
  * dilaya-connector src/byod-domains/derived-env.ts, origin-host.ts), plus the
  * origin-lock secret, and gets the primary's BYOD grants (byod-iam.ts: ABAC on
  * the `dilaya:byod=1` tag — the same reach, on the same once-per-account
- * resources, as the primary's role).
+ * resources, as the primary's role), plus the primary's record-write grant on
+ * Dilaya-held zones (domain-purchase-iam.ts ownedZoneRecordsStatement) so a CA
+ * org's bought domain keeps "Dilaya writes the records" — buying stays off.
  * Absent → never called: the consumer template is unchanged.
  */
 export interface ByodEdge {
@@ -97,4 +100,9 @@ export function consumeByodControlPlane(stack: cdk.Stack, ctx: StackContext): vo
       resources: [`arn:aws:s3:::${logBucket}`],
     })
   );
+  // Domains bought through Dilaya ("owned zones"): set-custom-domain /
+  // check-custom-domains write their records into the Dilaya-held zone, as on
+  // the primary — the primary's exact grant, not the purchase (no
+  // route53domains:*, no CreateHostedZone: buying stays the primary's).
+  fn.addToRolePolicy(ownedZoneRecordsStatement());
 }

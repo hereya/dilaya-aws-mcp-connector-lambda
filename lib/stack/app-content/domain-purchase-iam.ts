@@ -61,16 +61,26 @@ export function grantDomainPurchase(stack: cdk.Stack, ctx: StackContext): void {
         resources: ["*"],
       })
     );
-    fn.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: [
-          "route53:ChangeResourceRecordSets",
-          "route53:ListResourceRecordSets",
-          "route53:GetHostedZone",
-        ],
-        resources: ["arn:aws:route53:::hostedzone/*"],
-      })
-    );
+    fn.addToRolePolicy(ownedZoneRecordsStatement());
   }
+}
 
+/**
+ * Writing records into a Dilaya-held zone (a domain bought through Dilaya —
+ * "owned zones", dilaya-connector writeRecordsIntoManagedZone /
+ * healManagedZoneRecords): the connector addresses only the `zoneId` of its
+ * org's own `domainorder#` rows, but those zones are created after deploy, so
+ * the resource is the wildcard. Shared by the primary (with domainPurchase) and
+ * a consumer pod with the BYOD control plane (byod-edge.ts, t_rca_byod_ca),
+ * which writes records into its orgs' zones but never buys.
+ */
+export function ownedZoneRecordsStatement(): iam.PolicyStatement {
+  return new iam.PolicyStatement({
+    actions: [
+      "route53:ChangeResourceRecordSets",
+      "route53:ListResourceRecordSets",
+      "route53:GetHostedZone",
+    ],
+    resources: ["arn:aws:route53:::hostedzone/*"],
+  });
 }
