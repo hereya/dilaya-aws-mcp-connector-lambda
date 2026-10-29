@@ -100,6 +100,26 @@ describe("consumer pod with the BYOD control plane (appContentByodEdge)", () => 
     }
   });
 
+  // t_rca_edge_usage_ca: the connector's consumer reader folds this pod's
+  // orgs' edge traffic from the shared log. READ only, `cf/` only.
+  it("reads the shared edge log — list + get on cf/ only, never write or delete", () => {
+    const st = statements(synth({ ...CA, appContentByodEdge: EDGE }));
+    const bucket = "arn:aws:s3:::p-00000000-1111-2222-3333-edgeaccesslogbucket543d6-abcdefghijkl";
+    const list = st.filter((s) => actions(s).includes("s3:ListBucket"));
+    expect(list).toHaveLength(1);
+    expect(actions(list[0])).toEqual(["s3:ListBucket"]);
+    expect(list[0].Resource).toBe(bucket);
+    expect(list[0].Condition).toEqual({ StringLike: { "s3:prefix": ["cf/*"] } });
+    const get = st.filter((s) => actions(s).includes("s3:GetObject") && JSON.stringify(s.Resource).includes("edgeaccesslog"));
+    expect(get).toHaveLength(1);
+    expect(actions(get[0])).toEqual(["s3:GetObject"]);
+    expect(get[0].Resource).toBe(`${bucket}/cf/*`);
+    const onLogs = JSON.stringify(st.filter((s) => JSON.stringify(s.Resource ?? "").includes("edgeaccesslog")));
+    for (const a of ["s3:PutObject", "s3:DeleteObject", "s3:*"]) expect([a, onLogs.includes(a)]).toEqual([a, false]);
+    // Without the BYOD edge: no read of the primary's log.
+    expect(JSON.stringify(statements(synth(CA)))).not.toContain("edgeaccesslog");
+  });
+
   it("can write records into a Dilaya-held zone — the primary's exact grant — but never buy", () => {
     const st = statements(synth({ ...CA, appContentByodEdge: EDGE }));
     const write = st.filter((s) => s.Resource === "arn:aws:route53:::hostedzone/*");
