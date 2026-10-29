@@ -78,6 +78,7 @@ describe("secondary pod: global registry + cross-region static secrets", () => {
       Condition: {
         "ForAllValues:StringEquals": { "dynamodb:Attributes": ["org_id", "sk"] },
         StringEqualsIfExists: { "dynamodb:Select": "SPECIFIC_ATTRIBUTES" },
+        Null: { "dynamodb:Attributes": "false" },
       },
     });
   });
