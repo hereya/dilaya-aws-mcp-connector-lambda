@@ -67,6 +67,8 @@ export interface StackContext {
   /** An extra origin host a primary pod owns next to its public names (pod-topology.ts). */
   originAlias: string | undefined;
   skipGlobalResources: boolean;
+  /** Secondary pod consuming the primary's app-content edge (pod-topology.ts); undefined → not. */
+  appContentHostKvsArn: string | undefined;
   /** The region router's edge (region-router/config.ts); undefined → none. */
   regionRouter: RegionRouterConfig | undefined;
   /** Pod side: honour x-dilaya-viewer-host when the request proves this secret. */

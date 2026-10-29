@@ -8,7 +8,7 @@ import { LIB_DIR } from "../constants";
 import type { StackContext } from "../context";
 
 export function createOriginRestamp(stack: cdk.Stack, ctx: StackContext): void {
-  const { appContentOriginSecret, frontendAuthorizerRef, timeout } = ctx;
+  const { appContentOriginSecret } = ctx;
   // --- Origin-secret rotation, deploy-time: the per-org BYOD
   //     distributions are runtime-created (CloudFormation doesn't know
   //     them), so a deploy-time Trigger re-stamps their origin-verify
@@ -17,32 +17,7 @@ export function createOriginRestamp(stack: cdk.Stack, ctx: StackContext): void {
   //     failed re-stamp FAILS THE DEPLOY on purpose. Zero-downtime via
   //     appContentOriginSecretPrevious (dual-accept in the authorizer).
   if (appContentOriginSecret) {
-    // Versioned memory of the CURRENT secret: CloudFormation updates this
-    // parameter on each rotation, and SSM keeps the version history — the
-    // frontend authorizer auto-accepts version N-1 during a grace window
-    // after a rotation, so NO manual "previous secret" is ever needed.
-    const originSecretParam = new ssmparam.StringParameter(
-      stack,
-      "AppContentOriginSecretParam",
-      {
-        parameterName: `/dilaya/${cdk.Stack.of(stack).stackName}/app-content-origin-secret`,
-        stringValue: appContentOriginSecret,
-        description:
-          "Current app-content origin-lock secret (version history feeds the authorizer's rotation grace window)",
-      }
-    );
-    if (frontendAuthorizerRef) {
-      frontendAuthorizerRef.addEnvironment(
-        "ORIGIN_SECRET_PARAM",
-        originSecretParam.parameterName
-      );
-      frontendAuthorizerRef.addToRolePolicy(
-        new iam.PolicyStatement({
-          actions: ["ssm:GetParameter", "ssm:GetParameterHistory"],
-          resources: [originSecretParam.parameterArn],
-        })
-      );
-    }
+    createOriginSecretParam(stack, ctx);
 
     const restampFn = new triggers.TriggerFunction(
       stack,
@@ -80,4 +55,40 @@ export function createOriginRestamp(stack: cdk.Stack, ctx: StackContext): void {
     );
   }
 
+}
+
+/**
+ * The versioned SSM memory of the CURRENT origin secret + the frontend
+ * authorizer's read of it (rotation grace window). Per pod: SSM is regional, so
+ * a consumer secondary pod (consumer.ts) keeps its own. Caller checks the secret.
+ */
+export function createOriginSecretParam(stack: cdk.Stack, ctx: StackContext): void {
+  const { frontendAuthorizerRef } = ctx;
+  const appContentOriginSecret = ctx.appContentOriginSecret!;
+  // Versioned memory of the CURRENT secret: CloudFormation updates this
+  // parameter on each rotation, and SSM keeps the version history — the
+  // frontend authorizer auto-accepts version N-1 during a grace window
+  // after a rotation, so NO manual "previous secret" is ever needed.
+  const originSecretParam = new ssmparam.StringParameter(
+    stack,
+    "AppContentOriginSecretParam",
+    {
+      parameterName: `/dilaya/${cdk.Stack.of(stack).stackName}/app-content-origin-secret`,
+      stringValue: appContentOriginSecret,
+      description:
+        "Current app-content origin-lock secret (version history feeds the authorizer's rotation grace window)",
+    }
+  );
+  if (frontendAuthorizerRef) {
+    frontendAuthorizerRef.addEnvironment(
+      "ORIGIN_SECRET_PARAM",
+      originSecretParam.parameterName
+    );
+    frontendAuthorizerRef.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParameter", "ssm:GetParameterHistory"],
+        resources: [originSecretParam.parameterArn],
+      })
+    );
+  }
 }

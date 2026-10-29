@@ -29,6 +29,29 @@ export function createStaticAssets(stack: cdk.Stack, ctx: StackContext): void {
   // (Defined BEFORE the router function: its code interpolates the
   // bucket's regional domain for the static-mode origin switch.)
   // -------------------------------------------------------------------
+  const staticAssetsBucket = createStaticAssetsBucket(stack);
+  const staticAssetsOac = new cloudfront.S3OriginAccessControl(
+    stack,
+    "AppStaticAssetsOac"
+  );
+  const staticAssetsOrigin =
+    origins.S3BucketOrigin.withOriginAccessControl(staticAssetsBucket, {
+      originAccessControl: staticAssetsOac,
+    });
+
+  // Viewer-request CloudFront Function (JS 2.0 for the KVS binding).
+  ctx.appHostKvs = appHostKvs;
+  ctx.staticAssetsBucket = staticAssetsBucket;
+  ctx.staticAssetsOac = staticAssetsOac;
+  ctx.staticAssetsOrigin = staticAssetsOrigin;
+}
+
+/**
+ * The static-assets bucket + its CloudFront read grant. Shared by the primary's
+ * edge (above) and a consumer secondary pod (consumer.ts), whose bucket the
+ * primary's router reaches by OAC for that region's hosts (router-region.ts).
+ */
+export function createStaticAssetsBucket(stack: cdk.Stack): s3.Bucket {
   const staticAssetsBucket = new s3.Bucket(stack, "AppStaticAssetsBucket", {
     blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
     enforceSSL: true,
@@ -49,18 +72,5 @@ export function createStaticAssets(stack: cdk.Stack, ctx: StackContext): void {
       },
     })
   );
-  const staticAssetsOac = new cloudfront.S3OriginAccessControl(
-    stack,
-    "AppStaticAssetsOac"
-  );
-  const staticAssetsOrigin =
-    origins.S3BucketOrigin.withOriginAccessControl(staticAssetsBucket, {
-      originAccessControl: staticAssetsOac,
-    });
-
-  // Viewer-request CloudFront Function (JS 2.0 for the KVS binding).
-  ctx.appHostKvs = appHostKvs;
-  ctx.staticAssetsBucket = staticAssetsBucket;
-  ctx.staticAssetsOac = staticAssetsOac;
-  ctx.staticAssetsOrigin = staticAssetsOrigin;
+  return staticAssetsBucket;
 }

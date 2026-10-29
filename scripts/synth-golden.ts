@@ -8,7 +8,8 @@
  * Synthesizes the stack under several env profiles (each lighting up a
  * different set of feature branches) and writes one JSON per profile.
  *
- *   npx ts-node scripts/synth-golden.ts <outDir>
+ *   npx ts-node --prefer-ts-exts scripts/synth-golden.ts <outDir>
+ * (--prefer-ts-exts as in cdk.json: else stale untracked lib .js builds win over the .ts.)
  */
 import * as fs from "fs";
 import * as os from "os";
@@ -160,9 +161,8 @@ const profiles: Profile[] = [
     },
   },
   {
-    // G — the secondary pod wired to the EU registry's global partitions and
-    // to the eu-west-1 SSM parameter its executor left unresolved
-    // (t_rca_p1_router B1 + G3, lib/stack/secondary-pod.ts).
+    // G — the secondary pod wired to the EU registry's global partitions and to the
+    // eu-west-1 SSM parameter its executor left unresolved (lib/stack/secondary-pod.ts).
     name: "g-secondary-pod-global",
     layer: true,
     env: {
@@ -179,19 +179,30 @@ const profiles: Profile[] = [
       }),
     },
   },
+  {
+    // H — the secondary pod CONSUMING the primary's app-content edge (lib/stack/app-content/consumer.ts).
+    name: "h-secondary-pod-appcontent-consumer",
+    layer: true,
+    env: {
+      customDomain: "app.example.eu", customDomainZone: "example.eu", originDomain: "ca.app.example.eu",
+      wildcardCertificateArn: "arn:aws:acm:ca-central-1:123456789012:certificate/5555-6666",
+      skipGlobalResources: "true", globalRegistryTableArn: "arn:aws:dynamodb:eu-west-1:123456789012:table/eu-registry",
+      appContentDomain: "example-apps.eu", appContentZoneId: "ZAPPCONTENT123", appContentOriginSecret: "0123456789abcdef0123456789abcdef",
+      appContentHostKvsArn: "arn:aws:cloudfront::123456789012:key-value-store/0b1c2d3e-aaaa-bbbb-cccc-1234567890ab",
+      hereyaProjectEnv: JSON.stringify({ ...BASE_PROJECT_ENV, ...COGNITO_ENV }),
+    },
+  },
 ];
 
 const KEYS = [
-  "hereyaProjectRootDir", "oauthServerUrl", "hereyaProjectEnv", "organizationId",
-  "memorySize", "timeout", "handler", "customDomain", "customDomainZone",
-  "wildcardCertificateArn", "appContentDomain", "appContentZoneId", "appContentCertArn",
-  "appContentOriginSecret", "appContentOriginSecretPrevious", "frontendRateLimit",
-  "frontendRateBlock", "domainPurchase", "expectedAudience", "additionalForwardedHeaders",
-  "telegramBotTokenParam", "telegramChatId", "alarmInboxOrg", "alarmInboxApp",
-  "originDomain", "skipGlobalResources", "regionRouter", "regionRouterOrigins",
-  "regionRouterCertArn", "regionRouterEdgeVersionArn", "regionRouterOriginSecret", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain",
-  "globalRegistryTableArn",
-];
+  "hereyaProjectRootDir", "oauthServerUrl", "hereyaProjectEnv", "organizationId", "memorySize", "timeout", "handler",
+  "customDomain", "customDomainZone", "wildcardCertificateArn", "appContentDomain", "appContentZoneId",
+  "appContentCertArn", "appContentOriginSecret", "appContentOriginSecretPrevious", "frontendRateLimit",
+  "frontendRateBlock", "domainPurchase", "expectedAudience", "additionalForwardedHeaders", "telegramBotTokenParam",
+  "telegramChatId", "alarmInboxOrg", "alarmInboxApp", "originDomain", "skipGlobalResources", "regionRouter",
+  "regionRouterOrigins", "regionRouterCertArn", "regionRouterEdgeVersionArn", "regionRouterOriginSecret",
+  "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain", "globalRegistryTableArn",
+  "appContentHostKvsArn", "appContentRegionOrigins"];
 
 for (const p of profiles) {
   for (const k of KEYS) delete process.env[k];

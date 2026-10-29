@@ -29,11 +29,19 @@
  * refuses the edge features that are once-per-account by construction
  * (`appContentDomain`, `filesDomain`) instead of dropping them silently; it
  * also skips the legacy Cognito frontend distribution (`*.<customDomain>`).
+ *
+ * The ONE exception (t_rca_ca_site_serving): `appContentDomain` WITH
+ * `appContentHostKvsArn` makes the secondary pod a CONSUMER of the primary's
+ * app-content edge (app-content/consumer.ts) — it creates no distribution, KVS,
+ * cert, DNS or BYOD grant, only its own static-assets bucket, and writes its
+ * hosts into the primary's host-map store. Without the ARN it stays refused.
  */
 export interface PodTopology {
   originDomain: string | undefined;
   originAlias: string | undefined;
   skipGlobalResources: boolean;
+  /** The PRIMARY pod's host-map KVS a secondary pod writes into (consumer mode). */
+  appContentHostKvsArn: string | undefined;
 }
 
 export function readPodTopology(
@@ -45,6 +53,8 @@ export function readPodTopology(
   const originDomain = env["originDomain"] || undefined;
   const skipGlobalResources = env["skipGlobalResources"] === "true";
   const originAlias = env["originAlias"] || undefined;
+  const appContentHostKvsArn = env["appContentHostKvsArn"] || undefined;
+  if (appContentHostKvsArn) checkConsumer(env, appContentHostKvsArn, skipGlobalResources);
 
   if (originDomain) {
     if (!customDomain || !customDomainZone) {
@@ -85,7 +95,7 @@ export function readPodTopology(
       );
     }
     for (const k of ["appContentDomain", "filesDomain"]) {
-      if (env[k]) {
+      if (env[k] && !(k === "appContentDomain" && appContentHostKvsArn)) {
         throw new Error(
           `${k} is a once-per-account edge resource and cannot be set with skipGlobalResources=true`
         );
@@ -93,5 +103,23 @@ export function readPodTopology(
     }
   }
 
-  return { originDomain, originAlias, skipGlobalResources };
+  return { originDomain, originAlias, skipGlobalResources, appContentHostKvsArn };
+}
+
+const KVS_ARN_RE = /^arn:aws[a-z-]*:cloudfront::\d{12}:key-value-store\/[A-Za-z0-9-]{1,64}$/;
+
+/** Consumer mode (app-content/consumer.ts): a secondary pod, the content domain, nothing once-per-account. */
+function checkConsumer(env: NodeJS.ProcessEnv, arn: string, secondary: boolean): void {
+  if (!secondary) {
+    throw new Error("appContentHostKvsArn is for a SECONDARY pod (skipGlobalResources=true): a primary creates its own host-map store");
+  }
+  if (!KVS_ARN_RE.test(arn)) {
+    throw new Error(`appContentHostKvsArn must be a CloudFront KeyValueStore ARN; got ${arn}`);
+  }
+  if (!env["appContentDomain"] || !env["appContentZoneId"]) {
+    throw new Error("appContentHostKvsArn requires appContentDomain and appContentZoneId (the primary's content domain and its zone)");
+  }
+  for (const k of ["appContentCertArn", "appContentRegionOrigins", "domainPurchase"]) {
+    if (env[k]) throw new Error(`${k} belongs to the primary pod's edge and cannot be set on a consumer pod (appContentHostKvsArn)`);
+  }
 }
