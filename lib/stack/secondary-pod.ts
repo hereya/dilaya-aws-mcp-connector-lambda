@@ -13,7 +13,14 @@ import type { StackContext } from "./context";
  * carries GLOBAL_REGISTRY_TABLE_ARN support, t_rca_p1_router B1) reaches
  * them cross-region through `GLOBAL_REGISTRY_TABLE_ARN`; its org/app rows stay
  * in the pod's own registry. The grant is pinned by `dynamodb:LeadingKeys` to
- * those two partitions: this pod can never read or write an EU org's rows.
+ * those two partitions: this pod can never read or write an EU org's rows —
+ * with ONE exception, read-only and key-only (t_rca_p2_migrate, connector
+ * src/authz/org-elsewhere.ts, ≥ 0.1.427): before CREATING an org that dilaya.eu
+ * places in this region, the connector checks that the EU registry does not
+ * already hold it (an org whose region was set outside a move keeps its data
+ * there). GetItem only, every attribute it may name a key attribute
+ * (`dynamodb:Attributes` ⊆ org_id, sk) and `dynamodb:Select` SPECIFIC_ATTRIBUTES
+ * when present — so the grant reveals that a row EXISTS, never what it holds.
  * `POD_ROLE=secondary` turns off the connector's sweeps that mutate
  * once-per-account resources (edge host map, edge usage, domain watch).
  *
@@ -49,6 +56,16 @@ export function wireSecondaryPod(stack: cdk.Stack, ctx: StackContext): void {
         },
       })
     );
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem"],
+        resources: [tableArn],
+        conditions: {
+          "ForAllValues:StringEquals": { "dynamodb:Attributes": [...KEY_ATTRIBUTES] },
+          StringEqualsIfExists: { "dynamodb:Select": "SPECIFIC_ATTRIBUTES" },
+        },
+      })
+    );
   }
 
   const ssmArns = crossRegionSsmArns(ctx.nonPolicyEnv, stack.region);
@@ -69,6 +86,8 @@ export function wireSecondaryPod(stack: cdk.Stack, ctx: StackContext): void {
 
 /** The two registry partitions that exist once for the whole platform. */
 export const GLOBAL_PARTITIONS = ["_hosts", "_catalog"] as const;
+/** The registry's key attributes: all the existence check may read of any EU row. */
+export const KEY_ATTRIBUTES = ["org_id", "sk"] as const;
 
 const TABLE_ARN_RE = /^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\d{12}:table\/[A-Za-z0-9_.-]{3,255}$/;
 const SSM_ARN_RE = /^(?:secret:\/\/)?(?:aws:)?(arn:aws[a-z-]*:ssm:([a-z0-9-]+):\d{12}:parameter\/[\w./-]+)$/;
