@@ -16,7 +16,9 @@ import type { StackContext } from "./context";
  * those two partitions — plus one key-only, read-only GetItem (connector
  * src/authz/org-elsewhere.ts): before creating a new org, the connector checks
  * that the primary registry does not already hold it. `dynamodb:Attributes`
- * limited to the key attributes, `dynamodb:Select` SPECIFIC_ATTRIBUTES.
+ * limited to the key attributes, `dynamodb:Select` SPECIFIC_ATTRIBUTES, and
+ * `dynamodb:Attributes` required (ForAllValues holds on an absent key: without
+ * Null=false, a GetItem naming no projection would pass).
  * `POD_ROLE=secondary` turns off the connector's sweeps that mutate
  * once-per-account resources (edge host map, edge usage, domain watch).
  *
@@ -59,6 +61,7 @@ export function wireSecondaryPod(stack: cdk.Stack, ctx: StackContext): void {
         conditions: {
           "ForAllValues:StringEquals": { "dynamodb:Attributes": [...KEY_ATTRIBUTES] },
           StringEqualsIfExists: { "dynamodb:Select": "SPECIFIC_ATTRIBUTES" },
+          Null: { "dynamodb:Attributes": "false" },
         },
       })
     );
