@@ -143,12 +143,13 @@ export function readStackConfig(stack: cdk.Stack, ctx: StackContext): void {
   ].filter((h, i, a) => a.findIndex((x) => x.toLowerCase() === h.toLowerCase()) === i);
 
   // Regional pods (pod-topology.ts): absent → today's single-pod shape.
-  const { originDomain, originAlias, skipGlobalResources } = readPodTopology(
+  const { originDomain, originAlias, skipGlobalResources, appContentHostKvsArn } = readPodTopology(
     process.env, customDomain, customDomainZone, mcpDomain
   );
   ctx.originDomain = originDomain;
   ctx.originAlias = originAlias;
   ctx.skipGlobalResources = skipGlobalResources;
+  ctx.appContentHostKvsArn = appContentHostKvsArn;
   const rr = readRegionRouter(process.env, customDomain, mcpDomain, skipGlobalResources);
   ctx.regionRouter = rr.config;
   ctx.regionRouterOriginSecret = rr.originSecret;

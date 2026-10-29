@@ -37,6 +37,7 @@ import { grantByodDistributions } from "./stack/app-content/byod-iam";
 import { grantDomainPurchase } from "./stack/app-content/domain-purchase-iam";
 import { createOriginRestamp } from "./stack/app-content/origin-restamp";
 import { appContentOutputs } from "./stack/app-content/outputs";
+import { consumeAppContentEdge } from "./stack/app-content/consumer";
 import { createSubdomainRewrite } from "./stack/frontend-distribution/edge-function";
 import { createFrontendDistribution } from "./stack/frontend-distribution/distribution";
 import { seedViewerCert } from "./stack/frontend-distribution/viewer-cert-seed";
@@ -136,7 +137,10 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
       createCustomDomainDns(this, ctx);
 
-      if (ctx.appContentDomain) {
+      if (ctx.appContentDomain && ctx.appContentHostKvsArn) {
+        // A secondary pod serving its sites through the primary's edge.
+        consumeAppContentEdge(this, ctx);
+      } else if (ctx.appContentDomain) {
         resolveAppContentDomain(this, ctx);
         createOtpSender(this, ctx);
         createStaticAssets(this, ctx);
