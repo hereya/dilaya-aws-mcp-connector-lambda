@@ -13,14 +13,10 @@ import type { StackContext } from "./context";
  * carries GLOBAL_REGISTRY_TABLE_ARN support, t_rca_p1_router B1) reaches
  * them cross-region through `GLOBAL_REGISTRY_TABLE_ARN`; its org/app rows stay
  * in the pod's own registry. The grant is pinned by `dynamodb:LeadingKeys` to
- * those two partitions: this pod can never read or write an EU org's rows —
- * with ONE exception, read-only and key-only (t_rca_p2_migrate, connector
- * src/authz/org-elsewhere.ts, ≥ 0.1.427): before CREATING an org that dilaya.eu
- * places in this region, the connector checks that the EU registry does not
- * already hold it (an org whose region was set outside a move keeps its data
- * there). GetItem only, every attribute it may name a key attribute
- * (`dynamodb:Attributes` ⊆ org_id, sk) and `dynamodb:Select` SPECIFIC_ATTRIBUTES
- * when present — so the grant reveals that a row EXISTS, never what it holds.
+ * those two partitions — plus one key-only, read-only GetItem (connector
+ * src/authz/org-elsewhere.ts): before creating a new org, the connector checks
+ * that the primary registry does not already hold it. `dynamodb:Attributes`
+ * limited to the key attributes, `dynamodb:Select` SPECIFIC_ATTRIBUTES.
  * `POD_ROLE=secondary` turns off the connector's sweeps that mutate
  * once-per-account resources (edge host map, edge usage, domain watch).
  *

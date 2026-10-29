@@ -11,12 +11,12 @@ import type { StackContext } from "./context";
  *   PRIMARY pod (the source; also a single-region deployment):
  *     ListObjectsV2 (s3:ListBucket) + GetObject / HeadObject (s3:GetObject),
  *     then streams the bytes to URLs the target presigned;
- *     and the PURGE of a moved-away org (lot 5c, connector src/region-migrate/purge/,
- *     ≥ 0.1.427): a server-side CopyObject of each replica object to
- *     `_archive/orgpurge/<org>/…` (s3:PutObject on that prefix ONLY), then the
- *     deletion of the live replica and of a stale archive object (s3:DeleteObject),
- *     after checking the bucket's lifecycle rule that expires the archive after
- *     30 days (s3:GetLifecycleConfiguration — the rule itself is dilaya/aws-sqlite-data's).
+ *     and the PURGE of a moved-away org (connector src/region-migrate/purge/):
+ *     a server-side CopyObject of each replica object to `_archive/orgpurge/…`
+ *     (s3:PutObject on that prefix only), then an expiry tag on the original
+ *     (s3:PutObjectTagging) — the bucket's lifecycle rules (dilaya/aws-sqlite-data)
+ *     do the deletion; the connector checks them first (s3:GetLifecycleConfiguration).
+ *     No s3:DeleteObject on the primary.
  *   SECONDARY pod (the target) — its own bucket:
  *     ListObjectsV2 (s3:ListBucket) to diff what it holds;
  *     HeadObject (s3:GetObject) on a MULTIPART object only, to read the source
@@ -55,7 +55,7 @@ export function replicaBucketStatements(bucketArn: string, secondary: boolean): 
   }
   return [
     new iam.PolicyStatement({ actions: ["s3:ListBucket", "s3:GetLifecycleConfiguration"], resources: [bucketArn] }),
-    new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:DeleteObject"], resources: [`${bucketArn}/*`] }),
+    new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObjectTagging"], resources: [`${bucketArn}/*`] }),
     new iam.PolicyStatement({ actions: ["s3:PutObject"], resources: [`${bucketArn}/${ARCHIVE_PREFIX}*`] }),
   ];
 }

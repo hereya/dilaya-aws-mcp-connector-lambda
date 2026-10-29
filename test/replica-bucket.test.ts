@@ -61,10 +61,10 @@ const isHandler = (id: string) => id.startsWith("HandlerServiceRole");
 const onReplica = (s: any[]) => s.filter((x) => JSON.stringify(x.Resource).includes(BUCKET));
 
 describe("replica bucket grant (connector Lambda only)", () => {
-  it("primary pod: list + lifecycle read, get + delete on its objects, put ONLY under the purge archive", () => {
+  it("primary pod: list + lifecycle read, get + tag on its objects, put ONLY under the purge archive, never delete", () => {
     expect(onReplica(roleStatements(synth(EU), isHandler))).toEqual([
       { Action: ["s3:ListBucket", "s3:GetLifecycleConfiguration"], Effect: "Allow", Resource: ARN },
-      { Action: ["s3:GetObject", "s3:DeleteObject"], Effect: "Allow", Resource: `${ARN}/*` },
+      { Action: ["s3:GetObject", "s3:PutObjectTagging"], Effect: "Allow", Resource: `${ARN}/*` },
       { Action: "s3:PutObject", Effect: "Allow", Resource: `${ARN}/_archive/orgpurge/*` },
     ]);
   });
