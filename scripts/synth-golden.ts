@@ -51,6 +51,7 @@ const BASE_PROJECT_ENV = {
   capabilitySecretArn: "secret://s3cr3t-capability-value",
   someOtherSecret: "secret://another-value",
   IAM_POLICY_sqlite: POLICY,
+  sqliteReplicaBucketName: "p-golden-replicabucket-abc123", // as prod has it: lib/stack/replica-bucket.ts
 };
 
 const COGNITO_ENV = { userPoolId: "eu-west-1_ABCDEFGHI", userPoolClientId: "1h57kf5cpq17m0eml12example", awsCognitoRegion: "eu-west-1" };
