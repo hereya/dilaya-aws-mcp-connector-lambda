@@ -127,6 +127,21 @@ describe("static public agent routes", () => {
     expect((route as any).Properties.AuthorizerId).toBeUndefined();
   });
 
+  it("grants the connector Lambda ssm:GetParametersByPath on /dilaya/* only (org-move copy), never to app roles", () => {
+    const t = template();
+    t.hasResourceProperties("AWS::IAM::Policy", {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: "ssm:GetParametersByPath",
+            Resource: Match.stringLikeRegexp("parameter/dilaya/\\*$"),
+          }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(t.findResources("AWS::IAM::ManagedPolicy"))).not.toContain("GetParametersByPath");
+  });
+
   it("grants the connector Lambda ssm:PutParameter + ssm:DeleteParameter covering /secrets/* writes", () => {
     const t = template();
     // The connector role writes+deletes the secret VALUE under /dilaya/*/apps/*
