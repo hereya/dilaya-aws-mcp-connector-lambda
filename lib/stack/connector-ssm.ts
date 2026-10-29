@@ -38,6 +38,21 @@ export function grantConnectorSsm(stack: cdk.Stack, ctx: StackContext): void {
     })
   );
 
+  // Multi-tenant only: LIST one org's parameters (Région CA P2 lot 2 — the
+  // org-move copy, connector src/region-migrate/copy/source-aws.ts). The copy
+  // must find EVERY parameter under /dilaya/<orgId>/ without guessing names;
+  // GetParametersByPath is authorized on the PATH (`parameter/dilaya/<orgId>`),
+  // and its recursive answer covers what the grant above already lets the
+  // connector read one name at a time (apps/* and mcp/*). Read-only, same pod.
+  if (!organizationId) {
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ssm:GetParametersByPath"],
+        resources: [`arn:aws:ssm:${stack.region}:${stack.account}:parameter/dilaya/*`],
+      })
+    );
+  }
+
   // NOTE(F3): per-app Lambdas intentionally get NO SSM/KMS/Cognito grants in
   // public v1. The prior grants here were cross-tenant (ssm:GetParameter on
   // /dilaya/*/apps/* reaches every org's secrets; the Cognito grant keyed off
