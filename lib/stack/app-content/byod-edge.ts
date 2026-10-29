@@ -3,6 +3,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import type { StackContext } from "../context";
 import { grantByodDistributions } from "./byod-iam";
 import { ownedZoneRecordsStatement } from "./domain-purchase-iam";
+import { EDGE_LOG_PREFIX } from "../constants";
 
 /**
  * The BYOD control plane on a CONSUMER pod (Région Canada, t_rca_byod_ca).
@@ -32,6 +33,8 @@ import { ownedZoneRecordsStatement } from "./domain-purchase-iam";
  * resources, as the primary's role), plus the primary's record-write grant on
  * Dilaya-held zones (domain-purchase-iam.ts ownedZoneRecordsStatement) so a CA
  * org's bought domain keeps "Dilaya writes the records" — buying stays off.
+ * And it READS the shared edge log (`cf/` keys only) to count its own orgs'
+ * edge traffic (t_rca_edge_usage_ca).
  * Absent → never called: the consumer template is unchanged.
  */
 export interface ByodEdge {
@@ -98,6 +101,24 @@ export function consumeByodControlPlane(stack: cdk.Stack, ctx: StackContext): vo
     new iam.PolicyStatement({
       actions: ["s3:GetBucketAcl"],
       resources: [`arn:aws:s3:::${logBucket}`],
+    })
+  );
+  // The edge-usage READER (t_rca_edge_usage_ca): this pod folds its own orgs'
+  // edge traffic (cache hits, static pages, bytes) into its own counters, from
+  // the ONE edge log — dilaya-connector src/edge-usage-sync/reader.ts. Read
+  // only, `cf/` keys only (EDGE_LOG_PREFIX): list them, get them. No write, no
+  // delete, no other prefix.
+  fn.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: ["s3:ListBucket"],
+      resources: [`arn:aws:s3:::${logBucket}`],
+      conditions: { StringLike: { "s3:prefix": [`${EDGE_LOG_PREFIX}*`] } },
+    })
+  );
+  fn.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: ["s3:GetObject"],
+      resources: [`arn:aws:s3:::${logBucket}/${EDGE_LOG_PREFIX}*`],
     })
   );
   // Domains bought through Dilaya ("owned zones"): set-custom-domain /
