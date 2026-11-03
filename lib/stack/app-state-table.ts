@@ -76,7 +76,18 @@ export function createAppStateTable(stack: cdk.Stack, ctx: StackContext): void {
       // FilterLogEvents (17/09, t_incident_recovery_lag): the app-5xx analyser
       // reads freshly INGESTED lines, which Insights only indexes minutes later.
       actions: ["logs:StartQuery", "logs:StopQuery", "logs:FilterLogEvents"],
-      resources: [accessLogGroup.logGroupArn, `${accessLogGroup.logGroupArn}:*`],
+      // The bare log-group ARN too: from 2027-04-26 AWS grants these
+      // log-group-level actions only through it, and `logGroupArn` ends in `:*`.
+      resources: [
+        cdk.Stack.of(fn).formatArn({
+          service: "logs",
+          resource: "log-group",
+          resourceName: accessLogGroup.logGroupName,
+          arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+        }),
+        accessLogGroup.logGroupArn,
+        `${accessLogGroup.logGroupArn}:*`,
+      ],
     })
   );
   fn.addToRolePolicy(
