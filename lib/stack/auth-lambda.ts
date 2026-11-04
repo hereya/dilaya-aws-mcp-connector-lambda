@@ -73,7 +73,8 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
 
   // Allow InitiateAuth / RespondToAuthChallenge against any per-app pool
   // in this account (pool ARNs are created at runtime by enable-auth), plus
-  // the two passkey-registration calls (t_auth_passkey). All four are
+  // the two passkey-registration calls (t_auth_passkey) and the two
+  // refresh-token calls (t_app_session_longer). All six are
   // token-authorized user-pool APIs (the user's AccessToken / the app client
   // id carry the authorization), granted here for symmetry with the pair
   // the OTP flow has always listed — not because IAM gates them.
@@ -84,6 +85,11 @@ export function createAuthLambda(stack: cdk.Stack, ctx: StackContext): void {
         "cognito-idp:RespondToAuthChallenge",
         "cognito-idp:StartWebAuthnRegistration",
         "cognito-idp:CompleteWebAuthnRegistration",
+        // The long session (t_app_session_longer): silent renewal from the
+        // refresh-token cookie, and its revocation at logout. Token-authorized
+        // like the four above (the refresh token + client id authorize them).
+        "cognito-idp:GetTokensFromRefreshToken",
+        "cognito-idp:RevokeToken",
         // Admin API (IAM-authorized, unlike the four above): after a passkey
         // is registered the Lambda sets a random PERMANENT password so the
         // user becomes CONFIRMED — the only status Cognito offers the

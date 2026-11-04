@@ -57,7 +57,7 @@ describe("app-content host-routing (appContentDomain set)", () => {
   // policy is SHARED with every BYOD distribution (referenced by id), so the
   // ONE list here is the contract for both surfaces; the cache policy mirrors
   // it (CloudFront requires the origin set ⊇ the cache-key set).
-  const SESSION_COOKIES = ["dilaya_id_token", "hereya_id_token", "dilaya_agent", "dilaya_at", "dilaya_last_email", "dilaya_pk"];
+  const SESSION_COOKIES = ["dilaya_id_token", "hereya_id_token", "dilaya_agent", "dilaya_at", "dilaya_last_email", "dilaya_pk", "dilaya_rt"];
 
   it("forwards EVERY cookie the auth Lambda sets — session, passkey offer, last e-mail, device mark", () => {
     const t = build();
