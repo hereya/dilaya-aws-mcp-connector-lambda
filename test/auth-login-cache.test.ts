@@ -39,9 +39,11 @@ describe("the login page's Cache-Control", () => {
     // through loginPageResponse (an OTP page is for one e-mail, a redirect for
     // one visitor; a shared copy of either would be a leak, not a cache).
     expect(src.split("loginPageResponse(").length - 1).toBe(2);
-    // Two Cache-Control literals in the whole Lambda: this one, and the
-    // `no-store` every JSON answer carries.
-    expect(src.split('"Cache-Control"').length - 1).toBe(2);
+    // Three Cache-Control literals in the whole Lambda: this one, the
+    // `no-store` every JSON answer carries, and uncached() — the no-store
+    // the silent renewal's answers carry (t_app_session_longer).
+    expect(src.split('"Cache-Control"').length - 1).toBe(3);
     expect(src).toContain('"Cache-Control": "no-store"');
+    expect(src).toContain('res.headers["Cache-Control"] = "no-store";');
   });
 });

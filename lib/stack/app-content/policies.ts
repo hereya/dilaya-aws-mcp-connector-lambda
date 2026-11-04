@@ -13,6 +13,9 @@ import type { StackContext } from "../context";
 //   dilaya_at                         — passkey registration: 5-min AccessToken
 //   dilaya_last_email                 — login e-mail pre-fill
 //   dilaya_pk                         — "this device registered a passkey"
+//   dilaya_rt                         — the refresh token (t_app_session_longer;
+//                                       Path = the /auth/ tree only, so it keys
+//                                       and reaches nothing but the auth Lambda)
 const SESSION_COOKIES = [
   "dilaya_id_token",
   "hereya_id_token",
@@ -20,6 +23,7 @@ const SESSION_COOKIES = [
   "dilaya_at",
   "dilaya_last_email",
   "dilaya_pk",
+  "dilaya_rt",
 ];
 
 export function createAppContentPolicies(stack: cdk.Stack, ctx: StackContext): void {
