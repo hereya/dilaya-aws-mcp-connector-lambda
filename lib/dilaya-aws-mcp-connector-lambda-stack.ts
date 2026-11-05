@@ -58,6 +58,7 @@ import { createRegionRouter } from "./stack/region-router/distribution";
 import { applyPodTrust } from "./stack/region-router/pod-trust";
 import { wireSecondaryPod } from "./stack/secondary-pod";
 import { grantReplicaBucket } from "./stack/replica-bucket";
+import { createWifSigning } from "./stack/wif-signing";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -208,5 +209,8 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
     // Région CA P2 lot 3, last: two role statements appended, nothing re-ordered.
     grantReplicaBucket(this, ctx);
+
+    // Last for the same reason: one role statement appended, one env var.
+    createWifSigning(this, ctx);
   }
 }
