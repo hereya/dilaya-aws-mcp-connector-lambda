@@ -34,6 +34,8 @@ Static public routes (NO authorizer — self-authenticating):
   GET/POST /o/{orgId}/{app}/telegram/setup → one-time bot-token entry form
   GET/POST /o/{orgId}/{app}/secrets/setup  → one-time integration-secret entry form
   POST /o/{orgId}/{app}/mail/send          → app-mail gateway (Bearer = the app's DILAYA_CAPABILITY)
+  GET  /wif/.well-known/openid-configuration → WIF issuer discovery document (public)
+  GET  /wif/jwks.json                      → WIF issuer public keys (public)
 ```
 
 Per-app web frontends are served at the path URL `https://<customDomain>/o/<org>/<app>/site/` (and,
@@ -529,6 +531,10 @@ Once-per-account resources a second pod must **not** recreate, and how it avoids
   eu-west-1) is not resolved by the executor deploying in ca-central-1 and arrives as the ARN; the
   connector resolves it at runtime in that ARN's region. IAM: `ssm:GetParameter` on exactly those
   ARNs + `kms:Decrypt` via `ssm.<that region>`. Derived from the env itself — no parameter.
+- `wifKmsKeyArn` (0.1.142, `lib/stack/wif-signing.ts`): the primary pod's multi-Region WIF signing key
+  (its output `WifKmsKeyArn`). The pod creates the replica in its region; the connector gets the bare
+  key id in `WIF_KMS_KEY_ID` and `kms:Sign` + `kms:GetPublicKey` on the replica. The primary pod creates
+  the key itself, and refuses this parameter. Absent → no key, no env, no grant on this pod.
 
 Everything else is regional (Lambdas, HTTP API, DynamoDB, SSM, Secrets, Scheduler group, alarms,
 IAM roles with CloudFormation-generated names) and is simply built again in the second region.

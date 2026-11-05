@@ -4,6 +4,7 @@ import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import type { StackContext } from "./context";
 import { OPENAI_APPS_CHALLENGE_PATH } from "./openai-challenge";
 import { TRANSFER_MATERIAL_PATH } from "./files-transfer/page";
+import { WIF_PUBLIC_PATHS } from "./wif-signing";
 
 export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
   const { httpApi, httpAuthorizer, lambdaIntegration, mcpHostAuthorizer, prmLambda } = ctx;
@@ -39,6 +40,12 @@ export function createRoutes(stack: cdk.Stack, ctx: StackContext): void {
     methods: [apigwv2.HttpMethod.POST],
     integration: lambdaIntegration,
   });
+
+  // The workload-identity issuer's OIDC documents (wif-signing.ts). NO authorizer:
+  // they hold only public keys, and carry no org, so the region router sends them home.
+  for (const path of WIF_PUBLIC_PATHS) {
+    httpApi.addRoutes({ path, methods: [apigwv2.HttpMethod.GET], integration: lambdaIntegration });
+  }
 
   // MCP route (existing)
   httpApi.addRoutes({

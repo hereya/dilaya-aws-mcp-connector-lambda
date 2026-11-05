@@ -21,6 +21,7 @@ const REF: Record<string, number> = {
   "AWS::CloudFront::Distribution": 14,
   "AWS::CloudFront::CachePolicy": 36,
   "AWS::CloudFront::OriginRequestPolicy": 36,
+  "AWS::KMS::Key": 36, // mrk- + 32 hex
 };
 
 /** Resolved length of `Fn::GetAtt [<resource>, <attr>]`, as seen in prod. */
@@ -28,6 +29,7 @@ const GETATT: Record<string, number> = {
   "AWS::IAM::Role.Arn": 95,
   "AWS::CloudFront::KeyValueStore.Arn": 85,
   "AWS::CloudFront::OriginAccessControl.Id": 14,
+  "AWS::KMS::ReplicaKey.KeyId": 36, // mrk- + 32 hex
 };
 
 /** Literals a synth cannot know: the hosted-zone lookup answers "DUMMY" offline. */
