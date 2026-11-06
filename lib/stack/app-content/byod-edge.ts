@@ -126,4 +126,18 @@ export function consumeByodControlPlane(stack: cdk.Stack, ctx: StackContext): vo
   // the primary — the primary's exact grant, not the purchase (no
   // route53domains:*, no CreateHostedZone: buying stays the primary's).
   fn.addToRolePolicy(ownedZoneRecordsStatement());
+  // Managing a name the org already holds (renewal, ownership, transfer code):
+  // the region router sends those routes to the org's own pod. Buying stays
+  // the primary's: no RegisterDomain, no price or availability read here.
+  fn.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: [
+        "route53domains:GetDomainDetail",
+        "route53domains:EnableDomainAutoRenew",
+        "route53domains:DisableDomainAutoRenew",
+        "route53domains:RetrieveDomainAuthCode",
+      ],
+      resources: ["*"],
+    })
+  );
 }

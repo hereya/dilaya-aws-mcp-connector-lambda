@@ -95,9 +95,21 @@ describe("consumer pod with the BYOD control plane (appContentByodEdge)", () => 
     const acl = st.find((s) => actions(s).includes("s3:GetBucketAcl"));
     expect(acl.Resource).toBe("arn:aws:s3:::p-00000000-1111-2222-3333-edgeaccesslogbucket543d6-abcdefghijkl");
     const all = JSON.stringify(st);
-    for (const a of ["route53domains:", "cloudfront:UpdateFunction", "cloudfront:PublishFunction", "route53:CreateHostedZone"]) {
+    for (const a of ["route53domains:RegisterDomain", "route53domains:CheckDomainAvailability", "route53domains:ListPrices", "cloudfront:UpdateFunction", "cloudfront:PublishFunction", "route53:CreateHostedZone"]) {
       expect([a, all.includes(a)]).toEqual([a, false]);
     }
+  });
+
+  it("manages the names an org already holds, and buys none", () => {
+    const st = statements(synth({ ...CA, appContentByodEdge: EDGE }));
+    const registrar = st.filter((s) => actions(s).some((a: string) => a.startsWith("route53domains:")));
+    expect(registrar).toHaveLength(1);
+    expect(actions(registrar[0]).sort()).toEqual([
+      "route53domains:DisableDomainAutoRenew",
+      "route53domains:EnableDomainAutoRenew",
+      "route53domains:GetDomainDetail",
+      "route53domains:RetrieveDomainAuthCode",
+    ]);
   });
 
   // t_rca_edge_usage_ca: the connector's consumer reader folds this pod's
