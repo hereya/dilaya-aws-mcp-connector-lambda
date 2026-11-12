@@ -1,3 +1,4 @@
+import { FRONTEND_AUTHORIZER_VOLUME_THRESHOLD } from "../../lib/stack/alarms/traffic";
 import { alarmsBy, useStackFixture, WIRED } from "./helpers";
 
 describe("connector core alarms", () => {
@@ -33,15 +34,23 @@ describe("connector core alarms", () => {
 
   // Calibrated the opposite way round from the failure alarms: those sit just
   // above an empirically zero floor, this one must sit far enough above a
-  // BUSY baseline to never cry wolf. Background 2-190/h, the incident ~36 000/h
-  // — 3 000/h is ~16x the busiest legitimate hour ever measured and ~1/12th of
-  // the loop. An hourly period is deliberate too: this asks "is someone
+  // BUSY baseline to never cry wolf. First set at 3 000/h, it came to fire on
+  // a tenant's legitimate traffic, so it was raised to 8 000/h: above the
+  // legitimate peak observed, and still more than four times below the
+  // ~36 000/h of the incident. The number is pinned here as a literal ON
+  // PURPOSE, next to the constant: changing the constant alone must turn this
+  // test red, so that the threshold never moves without someone re-reading the
+  // reasoning. An hourly period is deliberate too: this asks "is someone
   // burning money right now?", which does not get a better answer for being
   // asked every five minutes, and a 5-minute window at the same rate would
   // fire on legitimate short bursts.
   test("the volume threshold clears real traffic by a wide margin", () => {
     const alarm = alarmsBy(template(WIRED), "Invocations")[0] as any;
-    expect(alarm.Properties.Threshold).toBe(3000);
+    expect(FRONTEND_AUTHORIZER_VOLUME_THRESHOLD).toBe(8000);
+    expect(alarm.Properties.Threshold).toBe(FRONTEND_AUTHORIZER_VOLUME_THRESHOLD);
+    expect(alarm.Properties.AlarmDescription).toContain(">= 8000 in 1 hour");
+    // The stale calibration must not survive in what the reader is paged with.
+    expect(alarm.Properties.AlarmDescription).not.toMatch(/3000|2-190/);
     expect(alarm.Properties.Period).toBe(3600);
     expect(alarm.Properties.Statistic).toBe("Sum");
     expect(alarm.Properties.EvaluationPeriods).toBe(1);

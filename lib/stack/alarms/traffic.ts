@@ -2,6 +2,13 @@ import * as cdk from "aws-cdk-lib/core";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import type { StackContext } from "../context";
 
+/**
+ * Frontend authorizer invocations per hour at which the volume alarm fires.
+ * The ONE place the number lives — the alarm, its description and the test
+ * that pins it all read it from here.
+ */
+export const FRONTEND_AUTHORIZER_VOLUME_THRESHOLD = 8000;
+
 export function createTrafficAlarms(stack: cdk.Stack, ctx: StackContext): void {
   const { alertOn, frontendAuthorizerRef, httpApi5xxTenantAppFilter } = ctx;
   // --- Volume, which every alarm above is structurally blind to ----------
@@ -26,11 +33,16 @@ export function createTrafficAlarms(stack: cdk.Stack, ctx: StackContext): void {
   // The threshold is calibrated on the measured baseline, like the alarms
   // above, but the arithmetic runs the other way — this one must sit far
   // ENOUGH ABOVE normal to never cry wolf, while still catching a loop
-  // early. Background is 2–190 invocations/hour; the 2026-08-27 loop ran at
-  // ~36 000/hour. 3 000/hour is ~16x the busiest legitimate hour ever
-  // measured and ~1/12th of the loop — a real traffic spike (a tenant's
-  // launch day, a newsletter) has room to be twelve times the record before
-  // it says anything, and a runaway crosses it within the first few minutes.
+  // early. It was first set at 3 000/hour, when the busiest legitimate hour
+  // was under 200. Tenant sites grew: a tenant's legitimate traffic came to
+  // cross that line repeatedly, each firing analysed as "no incident" — and
+  // an alarm that is usually wrong trains its reader to ignore it, which is
+  // worse than no alarm. FRONTEND_AUTHORIZER_VOLUME_THRESHOLD is therefore
+  // sized above the legitimate peak observed, and still far below a runaway
+  // loop: the 2026-08-27 one ran at ~36 000/hour, more than four times the
+  // threshold, so a loop of that kind still crosses it within its first
+  // quarter of an hour. Re-measure and raise it again when legitimate traffic
+  // approaches it; do not let it fire on normal days.
   //
   // An app's OWN backend answering 5xx on its site routes. The platform alarm
   // subtracts this population on purpose (a client's 500 is the client's to
@@ -73,14 +85,15 @@ export function createTrafficAlarms(stack: cdk.Stack, ctx: StackContext): void {
           period: cdk.Duration.hours(1),
           statistic: "Sum",
         }),
-        threshold: 3000,
+        threshold: FRONTEND_AUTHORIZER_VOLUME_THRESHOLD,
         evaluationPeriods: 1,
         comparisonOperator:
           cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
         // Same reasoning as the Errors alarms: no traffic is silence.
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
         alarmDescription:
-          "Dilaya connector: FrontendAuthorizer invocations >= 3000 in 1 hour (baseline 2-190/h). " +
+          `Dilaya connector: FrontendAuthorizer invocations >= ${FRONTEND_AUTHORIZER_VOLUME_THRESHOLD} in 1 hour ` +
+          "(sized above the legitimate peak observed, still far below a runaway loop). " +
           "This is a VOLUME alarm, not a failure one — everything is probably answering 200. It " +
           "means one tenant frontend is calling far more than any page legitimately does, almost " +
           "always a loop in the app's own code (a setInterval without a guard, or an effect that " +
