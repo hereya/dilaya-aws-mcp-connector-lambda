@@ -6,6 +6,9 @@ import * as path from "path";
 import { LIB_DIR } from "./constants";
 import type { StackContext } from "./context";
 
+/** Memory, hence CPU share, of the frontend authorizer / front door. */
+export const FRONTEND_AUTHORIZER_MEMORY_MB = 1024;
+
 export function createFrontendAuthorizer(stack: cdk.Stack, ctx: StackContext): void {
   const { appContentDomain, appContentOriginSecret, appContentOriginSecretPrevious, capSecretEntry, capSecretName, cognitoRegion, fn, httpApi, memorySize, monitoredFunctions, plainEnv, policyEnv, timeout } = ctx;
   // -----------------------------------------------------------------------
@@ -44,7 +47,12 @@ export function createFrontendAuthorizer(stack: cdk.Stack, ctx: StackContext): v
         ),
         // Front door too (front-door.js): it waits for the app's answer and
         // relays up to 6 MB, so API Gateway's 30 s and room for the payload.
-        memorySize: 256,
+        // 1024 MB for the CPU, not for the memory (it peaks well under 256):
+        // a sandbox's first invocation pays several TLS handshakes, first SDK
+        // sends and a lazy SDK load, and at 256 MB's CPU share that first
+        // answer took seconds. The `cold_start_steps` line (cold-timing.js)
+        // is how the effect is measured.
+        memorySize: FRONTEND_AUTHORIZER_MEMORY_MB,
         timeout: cdk.Duration.seconds(30),
         environment: {
           awsRegion: stack.region,
