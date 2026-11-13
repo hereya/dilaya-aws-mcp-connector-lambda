@@ -119,6 +119,44 @@ shared with the connector's `src/storage/transfer-link.ts`); `test/files-domain/
 executes the synthesised function. Proven 16/09 from headless Chrome against the live distribution
 before shipping: upload 201, over-size 400 EntityTooLarge, 200 MB in 39 s, download 200 attachment.
 
+**Another region's pod on the same files host** (`filesRegionOrigins`, primary pod only, phase 1 — the
+edge side). A secondary pod signs for its own bucket and keeps its transfer rows in its own table, so
+behind this host its presigned URLs, the page's form POST and the page's `/_t` lookup would all reach
+the wrong region. The parameter is a comma-separated list of
+`<region>:<pod origin host>:<bucket>.s3.<region>.amazonaws.com:<storage prefix>`, e.g.
+`ca-central-1:app-ca.example.eu:<bucket>.s3.ca-central-1.amazonaws.com:<s3Prefix>`. Per entry the
+distribution gains three behaviors, appended after the two fixed ones
+(`lib/stack/files-transfer/region-behaviors.ts`):
+
+| Path pattern | Origin | Function | For |
+|---|---|---|---|
+| `/_t/<region>` | that pod's own API host | URI → `/_t` | the page's material lookup |
+| `/_u/<region>` | that region's file bucket | URI → `/` | the page's presigned form POST |
+| `/<storage prefix>/*` | that region's file bucket | none | presigned GET/PUT, the page's download link |
+
+The bucket behaviors are the default behavior's twins (S3 origin without OAC/OAI, every method,
+`Managed-CachingDisabled`, `Managed-AllViewerExceptHostHeader`, https only), so a signature verifies as
+it does for the home bucket; `/_t/<region>` mirrors `/_t`. Every key starts with its pod's storage
+prefix and the prefixes differ, so the path alone picks the bucket — the default behavior is untouched
+and runs no function. All patterns are pairwise disjoint (a prefix is one segment starting with a
+letter or digit, so it is never `_t`, `_u` or `_transfer…`): their order decides nothing. The two
+rewrite functions are one constant assignment each (64 and 66 bytes, no branch, no loop, nothing read
+from the request) and are shared by every region.
+
+The page probes (the short link keeps its exact form): `POST /_t`, then `POST /_t/<region>` for each
+region baked in at synth, in order, one at a time. The first 2xx wins; if it came from a region, an
+upload posts its form to `/_u/<region>`; a download follows the signed path it was given. A 404 means
+"not here"; anything else (5xx, another 4xx, a network error) is **not** a "not here" — the probe goes
+on, but "expired" is shown only when every pod answered 404, otherwise the retryable network message.
+A legacy inline upload fragment is not probed: its region is read from the signed form's credential
+scope. Refused at synth: a malformed entry, the pod's own region or storage prefix (`s3Prefix`, which
+must then be present), a region / host / prefix listed twice, more than 6 regions, the parameter
+without `filesDomain`. **Absent → the template and the page are byte-identical** (golden profile j;
+profile k has one region). Not in this package yet (phase 2): the secondary pod's consumer parameter
+that sets `FILES_PUBLIC_HOST` on its connector — until then no pod emits a link these behaviors serve,
+and `filesDomain` stays refused on a secondary pod. Not proven on a live distribution yet: a presigned
+GET/PUT/form POST of another region through these behaviors.
+
 ## `hereyaProjectEnv` contract
 
 - `iamPolicy*` keys → attached to the Lambda role as IAM policies.
