@@ -77,3 +77,56 @@ var d;try{var b=h.replace(/-/g,"+").replace(/_/g,"/");
 d=JSON.parse(decodeURIComponent(escape(atob(b))))}catch(e){return stop(T.bad)}
 show(d);
 })();`;
+
+// ── Other regions on the same host (filesRegionOrigins, region-origins.ts) ───
+// A short id names no region, and the link must keep its exact form. So the
+// page PROBES: POST /_t (the home pod), then POST /_t/<region> for each region
+// baked in here at synth, in the parameter's order, one at a time.
+//   - 2xx from a pod: that pod holds the transfer. The id is 128 random bits
+//     kept by exactly one pod, so the first 2xx is authoritative. If it came
+//     from a region, an upload posts its form to /_u/<region> instead of "/";
+//     a download just follows the signed path it was given (already under that
+//     region's storage prefix).
+//   - 404: "not here" — try the next one.
+//   - anything else (5xx, 4xx, network error): NOT a "not here". The probe
+//     moves on, since another pod may hold the id, but the failure is
+//     remembered: "expired" is shown only when EVERY pod answered 404, and a
+//     run with one failed probe and no 2xx ends on the retryable network
+//     message. A pod that is down never turns a live link into an expired one.
+// A legacy INLINE upload fragment is not probed (it carries its material): its
+// region is read from the signed form's credential scope (key/date/REGION/…),
+// and anything but a baked region keeps posting to "/".
+// The variant is the single-region script with four spliced fragments; with no
+// region the script is returned untouched, byte for byte.
+const SPLICES: Array<[string, (regions: string) => string]> = [
+  ["(function(){\n", (r) => `(function(){\nvar R=${r},U="/";\n`],
+  ['q.open("POST","/");', () => 'q.open("POST",U);'],
+  [
+    'fetch("/_t",{method:"POST",headers:{"content-type":"text/plain"},body:h}).then(function(r){\n' +
+      'if(r.status===404)throw"exp";if(!r.ok)throw"net";return r.json()}).then(show,',
+    () =>
+      'var i=-1,bad=0,next=function(){if(++i<R.length)return get();throw bad?"net":"exp"},\n' +
+      'get=function(){var p=i<0?"":"/"+R[i];\n' +
+      'return fetch("/_t"+p,{method:"POST",headers:{"content-type":"text/plain"},body:h}).then(function(r){\n' +
+      'if(r.ok){if(p)U="/_u"+p;return r.json()}\n' +
+      "if(r.status!==404)bad=1;return next()},function(){bad=1;return next()})};\n" +
+      "get().then(show,",
+  ],
+  [
+    "show(d);\n})();",
+    () => 'var c=d&&d.fields&&String(d.fields["X-Amz-Credential"]||"").split("/")[2];if(c&&R.indexOf(c)>=0)U="/_u/"+c;\nshow(d);\n})();',
+  ],
+];
+
+/** The page's script for a distribution that also fronts `regions` (none → PAGE_SCRIPT itself). */
+export function pageScript(regions: string[]): string {
+  if (regions.length === 0) return PAGE_SCRIPT;
+  let s = PAGE_SCRIPT;
+  for (const [anchor, to] of SPLICES) {
+    const parts = s.split(anchor);
+    // An edit to the script above that moves an anchor must fail the synth, not ship a page that posts to the wrong bucket.
+    if (parts.length !== 2) throw new Error(`files transfer page: splice anchor found ${parts.length - 1} times: ${anchor.slice(0, 40)}`);
+    s = parts[0] + to(JSON.stringify(regions)) + parts[1];
+  }
+  return s;
+}

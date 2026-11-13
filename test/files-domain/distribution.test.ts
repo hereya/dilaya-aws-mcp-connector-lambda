@@ -103,10 +103,10 @@ describe("files domain refuses a half configuration", () => {
 // receives an input it DECLARES; an undeclared one is dropped in silence while
 // the deploy goes green (2026-08-07, three releases that created nothing).
 describe("files domain input names", () => {
-  it("reads and declares filesDomain / filesZoneId / filesCertArn verbatim", () => {
+  it("reads and declares filesDomain / filesZoneId / filesCertArn / filesRegionOrigins verbatim", () => {
     const lib = readLibSources();
     const hereyarc = fs.readFileSync(path.join(PKG_ROOT, "hereyarc.yaml"), "utf8");
-    for (const name of ["filesDomain", "filesZoneId", "filesCertArn"]) {
+    for (const name of ["filesDomain", "filesZoneId", "filesCertArn", "filesRegionOrigins"]) {
       expect(lib).toContain(`process.env["${name}"]`);
       expect(hereyarc).toMatch(new RegExp(`^ {2}${name}:$`, "m"));
     }

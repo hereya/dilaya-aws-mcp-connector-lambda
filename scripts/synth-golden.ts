@@ -196,12 +196,13 @@ profiles.push({ ...profiles[7]!, name: "i-secondary-pod-appcontent-consumer-byod
 // J — the files domain (lib/stack/files-domain.ts) on the minimal shape: the pass-through distribution and its transfer page.
 const FILES_ENV = { filesDomain: "files.example.eu", filesZoneId: "ZFILES123", filesCertArn: "arn:aws:acm:us-east-1:123456789012:certificate/5555-6666" };
 profiles.push({ ...profiles[0]!, name: "j-files-domain", env: { ...profiles[0]!.env, ...FILES_ENV } });
+profiles.push({ ...profiles[9]!, name: "k-files-domain-regions", env: { ...profiles[9]!.env, filesRegionOrigins: "ca-central-1:app-ca.example.eu:files-ca.s3.ca-central-1.amazonaws.com:apps-ca" } });
 
 const KEYS = [
   "hereyaProjectRootDir", "oauthServerUrl", "hereyaProjectEnv", "organizationId", "memorySize", "timeout", "handler", "customDomain", "customDomainZone", "wildcardCertificateArn",
   "appContentDomain", "appContentZoneId", "appContentCertArn", "appContentOriginSecret", "appContentOriginSecretPrevious", "frontendRateLimit", "frontendRateBlock", "domainPurchase", "expectedAudience", "additionalForwardedHeaders",
   "telegramBotTokenParam", "telegramChatId", "alarmInboxOrg", "alarmInboxApp", "originDomain", "skipGlobalResources", "regionRouter", "regionRouterOrigins", "regionRouterCertArn", "regionRouterEdgeVersionArn",
-  "regionRouterOriginSecret", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain", "globalRegistryTableArn", "appContentHostKvsArn", "appContentRegionOrigins", "appContentByodEdge"];
+  "regionRouterOriginSecret", "filesDomain", "filesZoneId", "filesCertArn", "mcpDomain", "globalRegistryTableArn", "appContentHostKvsArn", "appContentRegionOrigins", "appContentByodEdge", "filesRegionOrigins"];
 
 for (const p of profiles) {
   for (const k of KEYS) delete process.env[k];
