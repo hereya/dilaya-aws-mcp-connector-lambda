@@ -54,6 +54,7 @@ import { createMcpRefusalsAlarm } from "./stack/alarms/mcp-refusals";
 import { createAppStateAlarms } from "./stack/alarms/dynamodb";
 import { createSweepTick } from "./stack/sweep-tick";
 import { createFilesDomain } from "./stack/files-domain";
+import { consumeFilesPublicHost } from "./stack/files-transfer/public-host-consumer";
 import { createRegionRouter } from "./stack/region-router/distribution";
 import { applyPodTrust } from "./stack/region-router/pod-trust";
 import { wireSecondaryPod } from "./stack/secondary-pod";
@@ -197,6 +198,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // Last on purpose: it only adds resources and one env var, so appending it
     // cannot re-order anything the steps above synthesized.
     createFilesDomain(this, ctx);
+    consumeFilesPublicHost(this, ctx); // a secondary pod on the primary's files host; inert without filesPublicHost
 
     // After it for the same reason: a schedule rule and a resource policy, no
     // role statement, no env var — nothing above can be re-ordered by it.

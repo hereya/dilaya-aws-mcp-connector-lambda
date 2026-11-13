@@ -152,10 +152,30 @@ A legacy inline upload fragment is not probed: its region is read from the signe
 scope. Refused at synth: a malformed entry, the pod's own region or storage prefix (`s3Prefix`, which
 must then be present), a region / host / prefix listed twice, more than 6 regions, the parameter
 without `filesDomain`. **Absent → the template and the page are byte-identical** (golden profile j;
-profile k has one region). Not in this package yet (phase 2): the secondary pod's consumer parameter
-that sets `FILES_PUBLIC_HOST` on its connector — until then no pod emits a link these behaviors serve,
-and `filesDomain` stays refused on a secondary pod. Not proven on a live distribution yet: a presigned
-GET/PUT/form POST of another region through these behaviors.
+profile k has one region).
+
+**The consumer side** (`filesPublicHost`, secondary pod only, phase 2 —
+`lib/stack/files-transfer/public-host-consumer.ts`). A pod listed in the primary's `filesRegionOrigins`
+still names S3 in its links until it is told the files host: `filesPublicHost=<files host>` (a bare
+lowercase DNS name, e.g. `files.example.eu`) sets `FILES_PUBLIC_HOST` on its connector — which then
+swaps the host of each presigned URL of its own bucket and offers the `/_transfer` fallback link — and
+creates **no resource**: no distribution, certificate, record, function, grant or bucket policy (a
+link's authorization is its signature, made by the pod's own role for its own bucket). `filesDomain`
+stays refused on a secondary pod. The output `FilesRegionOrigin` is the exact entry the primary takes:
+`<region>:<originDomain>:<bucketName>.s3.<region>.amazonaws.com:<s3Prefix>`.
+
+Order of a rollout: (1) list the pod in the primary's `filesRegionOrigins` — the entry is built from the
+pod's region, `originDomain`, `bucketName` and `s3Prefix` — and deploy the primary; (2) only then set
+`filesPublicHost` on the secondary and deploy it (its output confirms the entry). The other order
+breaks every link of the pod: a host whose distribution does not list it answers 403 (the default
+behavior fronts the primary's bucket). Rollback: remove `filesPublicHost` and redeploy the secondary — links name S3 again;
+the primary's behaviors can stay, inert. Refused at synth: a primary pod, the parameter together with
+`filesDomain`, a host that is not a bare name (scheme, path, port, upper case, single label, space) or
+that is one of the pod's own API names, a `hereyaProjectEnv` without `bucketName` or without a
+one-segment `s3Prefix` (what the primary routes by). **Absent → every template is byte-identical**
+(golden profiles a–k; profile l is profile e with the parameter: one variable, one output, no
+resource). Weight on the Lambda environment: the key, the host and 6 bytes of JSON — 38 bytes for a
+15-character host.
 
 ## `hereyaProjectEnv` contract
 
@@ -550,7 +570,7 @@ Once-per-account resources a second pod must **not** recreate, and how it avoids
 | `app.dilaya.eu` API-GW domain + A record | one DNS name | `originDomain` |
 | `mcp.<zone>` plugin host domain + A record | one DNS name | `originDomain` (not owned) |
 | App-content edge: CloudFront `*.dilaya-apps.eu` + wildcard A/AAAA + `_dmarc` TXT, CF Function `app-app-apphost-router` (global name), KVS, static bucket/OAC, edge log bucket, cache/origin-request policies, BYOD IAM, Route 53 Domains IAM (global API), `ByodOriginRestamp` trigger (rewrites every `dilaya:byod` distribution) | global CloudFront names/aliases, one DNS name, account-wide side effects | don't set `appContentDomain` (refused with the flag) |
-| Files domain: CloudFront `files.dilaya.eu` + A/AAAA | one alias / DNS name | don't set `filesDomain` (refused with the flag) |
+| Files domain: CloudFront `files.dilaya.eu` + A/AAAA | one alias / DNS name | don't set `filesDomain` (refused with the flag); `filesPublicHost` to emit links on the primary's host |
 | Runtime IAM roles named from `APP_LAMBDA_NAME_PREFIX` (`<prefix>role-shared` + its inline policy, `<prefix>role-<o8>-<a8>`, the `role-migrate` orphan sweep) | IAM names are account-global | prefix from `originDomain` (`app-ca-app-`) |
 | Legacy frontend distribution `*.<customDomain>` + us-east-1 `DnsValidatedCertificate` + CF Function `<stack>-subdomain-rewrite` + wildcard record (only with Cognito env; not in prod today) | global alias / names | skipped by the flag |
 

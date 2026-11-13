@@ -34,11 +34,11 @@ export const PARAM = "filesRegionOrigins";
 export const MAX_REGIONS = 6;
 
 const REGION_RE = /^[a-z]{2}(-[a-z]+)+-\d$/;
-const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+export const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const BUCKET_DOMAIN_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\.s3\.([a-z]{2}(-[a-z]+)+-\d)\.amazonaws\.com$/;
 // One path segment, starting with a letter or digit: it can therefore never be `_t`, `_u` or
 // `_transfer…`, and it holds no CloudFront wildcard (`*`, `?`) and no `/`.
-const PREFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
+export const PREFIX_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/;
 
 export const regionMaterialPath = (region: string) => `/_t/${region}`;
 export const regionUploadPath = (region: string) => `/_u/${region}`;
