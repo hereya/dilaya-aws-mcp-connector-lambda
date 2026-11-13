@@ -20,7 +20,14 @@ export const ENABLED: Record<string, string> = {
   filesCertArn: FILES_CERT_ARN,
 };
 
-const FEATURE_KEYS = ["filesDomain", "filesZoneId", "filesCertArn"];
+const FEATURE_KEYS = ["filesDomain", "filesZoneId", "filesCertArn", "filesRegionOrigins"];
+
+/** A secondary region's entry for filesRegionOrigins — placeholders, like everything here. */
+export const CA = { region: "ca-central-1", host: "app-ca.example.eu", bucketDomain: "files-ca-test.s3.ca-central-1.amazonaws.com", prefix: "p-ca" };
+export const US = { region: "us-east-2", host: "app-us.example.eu", bucketDomain: "files-us-test.s3.us-east-2.amazonaws.com", prefix: "p-us" };
+export const entry = (r: typeof CA) => `${r.region}:${r.host}:${r.bucketDomain}:${r.prefix}`;
+/** The pod's own storage prefix in ENABLED. */
+export const HOME_PREFIX = "p-x";
 
 /**
  * Synthesize the stack under a minimal env (no customDomain, no app-content)

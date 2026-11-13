@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { PAGE_SCRIPT } from "./page-script";
+import { pageScript } from "./page-script";
 
 // The human transfer page (t_dad9f0e09ffb): one self-contained document, no
 // external resource of any kind. Its script and style are pinned by hash in the
@@ -22,30 +22,33 @@ const STYLE =
 
 const sha256 = (s: string) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`;
 
-export const TRANSFER_PAGE_HTML =
+const pageHtml = (script: string) =>
   '<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">' +
   "<meta name=robots content=noindex><title>Dilaya</title><style>" +
   STYLE +
   "</style></head><body><main id=m></main><script>" +
-  PAGE_SCRIPT +
+  script +
   "</script></body></html>";
 
 // connect-src 'self' is where the upload goes; navigating to the download link
 // is a navigation, which no fetch directive governs.
-export const TRANSFER_PAGE_CSP =
+const pageCsp = (script: string) =>
   "default-src 'none'; " +
-  `script-src ${sha256(PAGE_SCRIPT)}; style-src ${sha256(STYLE)}; ` +
+  `script-src ${sha256(script)}; style-src ${sha256(STYLE)}; ` +
   "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /**
  * Viewer-request function for the `/_transfer*` behavior: answers the page
  * itself and never forwards to the bucket. The HTML and the CSP travel as JSON
  * string literals, so no character in them can break the function's syntax.
+ * `regions` (filesRegionOrigins) are baked into the page's script; none → the
+ * exact page of a single-region deployment.
  */
-export function transferFunctionCode(): string {
+export function transferFunctionCode(regions: string[] = []): string {
+  const script = pageScript(regions);
   return [
-    `var HTML=${JSON.stringify(TRANSFER_PAGE_HTML)};`,
-    `var CSP=${JSON.stringify(TRANSFER_PAGE_CSP)};`,
+    `var HTML=${JSON.stringify(pageHtml(script))};`,
+    `var CSP=${JSON.stringify(pageCsp(script))};`,
     "function handler(event){",
     "var r=event.request;",
     `if(r.uri!==${JSON.stringify(TRANSFER_PATH)}&&r.uri!==${JSON.stringify(TRANSFER_PATH + "/")}){`,

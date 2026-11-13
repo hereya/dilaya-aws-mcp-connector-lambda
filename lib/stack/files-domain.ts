@@ -8,6 +8,8 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import type { StackContext } from "./context";
 import { CLOUDFRONT_FUNCTION_MAX_BYTES } from "./app-content/router-stop-pages";
 import { TRANSFER_MATERIAL_PATH, TRANSFER_PATH, transferFunctionCode } from "./files-transfer/page";
+import { type PassThrough, regionBehaviors } from "./files-transfer/region-behaviors";
+import { parseFilesRegionOrigins } from "./files-transfer/region-origins";
 
 /**
  * Presigned file URLs on a Dilaya host (t_files_own_domain, 2026-09-12).
@@ -32,10 +34,19 @@ import { TRANSFER_MATERIAL_PATH, TRANSFER_PATH, transferFunctionCode } from "./f
  * Optional and additive: absent `filesDomain` → nothing is created and the
  * connector keeps handing out S3 hosts. The certificate is passed in (us-east-1,
  * validated outside the stack) like the app-content one.
+ *
+ * `filesRegionOrigins` (optional, files-transfer/region-origins.ts) adds three
+ * behaviors per listed region so another region's pod can hand out links on
+ * this same host. Absent → the distribution and its page are byte-identical.
  */
 export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
   const filesDomain = process.env["filesDomain"];
-  if (!filesDomain) return;
+  const filesRegionOrigins = process.env["filesRegionOrigins"];
+  if (!filesDomain) {
+    // Never dropped in silence: the behaviors live on the files distribution.
+    if (filesRegionOrigins) throw new Error("filesRegionOrigins requires filesDomain (the distribution it adds behaviors to)");
+    return;
+  }
   const filesZoneId = process.env["filesZoneId"];
   const filesCertArn = process.env["filesCertArn"];
   if (!filesZoneId) {
@@ -56,7 +67,19 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
 
   const bucket = s3.Bucket.fromBucketName(stack, "FilesBucket", bucketName);
   const origin = origins.S3BucketOrigin.withBucketDefaults(bucket);
-  const transferFn = createTransferPageFunction(stack);
+  const regions = parseFilesRegionOrigins(filesRegionOrigins, {
+    region: stack.region,
+    prefix: ctx.plainEnv["s3Prefix"],
+  });
+  const transferFn = createTransferPageFunction(stack, regions.map((r) => r.region));
+  // What makes a presigned URL verify through the distribution (see above);
+  // shared by the default behavior, /_t and every region's behaviors.
+  const passThrough: PassThrough = {
+    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+    allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+    cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+    originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+  };
   // The connector's HTTP API, as a SECOND origin, for exactly one path: the
   // short transfer link's material lookup (t_transfer_short_link). The page
   // POSTs the link's id to /_t on its OWN origin — no CORS, and the id rides in
@@ -74,14 +97,7 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
       filesCertArn
     ),
     domainNames: [filesDomain],
-    defaultBehavior: {
-      origin,
-      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-      originRequestPolicy:
-        cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-    },
+    defaultBehavior: { origin, ...passThrough },
     // The human transfer page (t_dad9f0e09ffb) on the SAME host as the
     // presigned URLs. Its function answers every request itself, so the bucket
     // is never asked for this path (the origin is only required by the API).
@@ -98,14 +114,10 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
       },
       // POST /_t → the connector (public route, no authorizer: the 128-bit id
       // IS the secret). Uncached; every viewer header but Host forwarded.
-      [TRANSFER_MATERIAL_PATH]: {
-        origin: apiOrigin,
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy:
-          cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-      },
+      [TRANSFER_MATERIAL_PATH]: { origin: apiOrigin, ...passThrough },
+      // Other regions' pods on this host: /_t/<region>, /_u/<region>,
+      // /<their storage prefix>/* — nothing without filesRegionOrigins.
+      ...regionBehaviors(stack, regions, passThrough),
     },
   });
 
@@ -125,8 +137,8 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
   });
 }
 
-function createTransferPageFunction(stack: cdk.Stack): cloudfront.Function {
-  const code = transferFunctionCode();
+function createTransferPageFunction(stack: cdk.Stack, regions: string[]): cloudfront.Function {
+  const code = transferFunctionCode(regions);
   if (Buffer.byteLength(code, "utf8") > CLOUDFRONT_FUNCTION_MAX_BYTES) {
     throw new Error("files transfer page function exceeds the CloudFront 10 KB code limit");
   }

@@ -93,6 +93,10 @@ describe("regional pods: originDomain + skipGlobalResources", () => {
     expect(() =>
       template({ ...CA, skipGlobalResources: "true", filesDomain: "files.dilaya.eu", filesZoneId: "Z", filesCertArn: "arn:c" })
     ).toThrow(/filesDomain is a once-per-account/);
+    // ...and the primary-only regions parameter is never dropped in silence on a pod without the distribution.
+    expect(() =>
+      template({ ...CA, skipGlobalResources: "true", filesRegionOrigins: "us-east-2:app-us.dilaya.eu:b.s3.us-east-2.amazonaws.com:p-us" })
+    ).toThrow(/filesRegionOrigins requires filesDomain/);
     expect(() => template({ ...PUBLIC, originDomain: "ca.app.example.com" })).toThrow(/must sit in the customDomain zone dilaya.eu/);
     expect(() => template({ ...PUBLIC, originDomain: "app.dilaya.eu" })).toThrow(/must differ/);
     expect(() => template({ originDomain: "ca.app.dilaya.eu" })).toThrow(/requires customDomain/);
