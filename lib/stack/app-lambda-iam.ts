@@ -40,6 +40,35 @@ export function grantAppLambdaManagement(stack: cdk.Stack, ctx: StackContext): v
     })
   );
 
+  // A DELETED tenant backend's log group: the teardown gives it 30 days of
+  // retention and a deletion tag, and the connector's scheduled sweep deletes it
+  // 30 days later (never a group whose function still exists). Same tenant name
+  // pattern as above — no platform log group is reachable.
+  fn.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: [
+        "logs:TagResource",
+        "logs:TagLogGroup",
+        "logs:ListTagsForResource",
+        "logs:ListTagsLogGroup",
+        "logs:DescribeLogStreams",
+        "logs:DeleteLogGroup",
+      ],
+      resources: [
+        `arn:aws:logs:${stack.region}:${stack.account}:log-group:/aws/lambda/${appLambdaNamePrefix}*`,
+        `arn:aws:logs:${stack.region}:${stack.account}:log-group:/aws/lambda/${appLambdaNamePrefix}*:*`,
+      ],
+    })
+  );
+  // The sweep LISTS the tenant groups by name prefix: DescribeLogGroups is
+  // authorized on the account's log-group resource as a whole (metadata only).
+  fn.addToRolePolicy(
+    new iam.PolicyStatement({
+      actions: ["logs:DescribeLogGroups"],
+      resources: [`arn:aws:logs:${stack.region}:${stack.account}:log-group:*`],
+    })
+  );
+
   // Lambda layer access (needed when creating per-app Lambdas with layers)
   if (runtimeLayer) {
     fn.addToRolePolicy(

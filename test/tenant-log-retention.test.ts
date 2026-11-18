@@ -87,6 +87,18 @@ describe("tenant log-group retention grant", () => {
     ).toBe(true);
   });
 
+  it("grants the deleted-group lifecycle (tag, read, delete) on tenant groups only, and the listing as metadata", () => {
+    const all = handlerStatements(template());
+    const del = all.filter((s) => s.actions.includes("logs:DeleteLogGroup"));
+    expect(del.length).toBe(1);
+    for (const a of ["logs:TagResource", "logs:ListTagsForResource", "logs:DescribeLogStreams"]) expect(del[0].actions).toContain(a);
+    const rendered = JSON.stringify(del[0].resources);
+    expect(rendered).toContain("-app-");
+    expect(rendered).not.toMatch(/log-group:\/aws\/lambda\/\*/);
+    const list = all.filter((s) => s.actions.includes("logs:DescribeLogGroups"));
+    expect(list.map((s) => s.actions)).toEqual([["logs:DescribeLogGroups"]]);
+  });
+
   it("scopes that grant to the tenant name pattern — never a platform log group", () => {
     const found = handlerStatements(template()).filter((s) =>
       s.actions.includes("logs:PutRetentionPolicy")
