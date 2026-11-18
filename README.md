@@ -589,6 +589,9 @@ Once-per-account resources a second pod must **not** recreate, and how it avoids
   eu-west-1) is not resolved by the executor deploying in ca-central-1 and arrives as the ARN; the
   connector resolves it at runtime in that ARN's region. IAM: `ssm:GetParameter` on exactly those
   ARNs + `kms:Decrypt` via `ssm.<that region>`. Derived from the env itself — no parameter.
+- `forgeProvider` (0.1.148, `lib/stack/forge-provider.ts`): `forgejo` sets `FORGE_PROVIDER=forgejo` on the connector
+  handler; absent, empty or `github` sets nothing (environment byte-identical); any other value fails the synth.
+  Removing it is the rollback.
 - `wifKmsKeyArn` (0.1.142, `lib/stack/wif-signing.ts`): the primary pod's multi-Region WIF signing key
   (its output `WifKmsKeyArn`). The pod creates the replica in its region; the connector gets the bare
   key id in `WIF_KMS_KEY_ID` and `kms:Sign` + `kms:GetPublicKey` on the replica. The primary pod creates

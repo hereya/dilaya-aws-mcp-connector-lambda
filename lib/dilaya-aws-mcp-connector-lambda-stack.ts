@@ -38,6 +38,7 @@ import { grantDomainPurchase } from "./stack/app-content/domain-purchase-iam";
 import { createOriginRestamp } from "./stack/app-content/origin-restamp";
 import { appContentOutputs } from "./stack/app-content/outputs";
 import { consumeAppContentEdge } from "./stack/app-content/consumer";
+import { applyForgeProvider } from "./stack/forge-provider";
 import { createSubdomainRewrite } from "./stack/frontend-distribution/edge-function";
 import { createFrontendDistribution } from "./stack/frontend-distribution/distribution";
 import { seedViewerCert } from "./stack/frontend-distribution/viewer-cert-seed";
@@ -214,5 +215,6 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
 
     // Last for the same reason: one role statement appended, one env var.
     createWifSigning(this, ctx);
+    applyForgeProvider(ctx); // last: one env var, only for forgeProvider=forgejo
   }
 }
