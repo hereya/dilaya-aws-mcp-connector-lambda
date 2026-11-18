@@ -76,6 +76,22 @@ export function createBillingRoutes(stack: cdk.Stack, ctx: StackContext): void {
     integration: lambdaIntegration,
   });
 
+  // Public console door (NO JWT authorizer). The customer-space backend talks
+  // to an org's agents through these ops (list apps, read the console thread,
+  // send a message or a button answer, mark it seen). Same self-authentication
+  // as the routes above: an AS-signed RS256 assertion verified in the
+  // connector against the AS JWKS, its `aud` bound to the EXACT op url, so an
+  // assertion minted to read the thread cannot be replayed to write into an
+  // agent's inbox. One static greedy route rather than one per op: the
+  // per-op binding lives in the assertion's `aud`, checked by the connector,
+  // which answers 404 on any op it does not implement (and on every op until
+  // its own code ships — this route alone is inert).
+  httpApi.addRoutes({
+    path: "/console/{proxy+}",
+    methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+    integration: lambdaIntegration,
+  });
+
   // Allow API Gateway to invoke the org Lambda on ANY route of this API.
   // HttpLambdaIntegration only grants a route-specific permission for /mcp,
   // but the org Lambda creates additional routes at runtime that target
