@@ -92,6 +92,20 @@ export function createBillingRoutes(stack: cdk.Stack, ctx: StackContext): void {
     integration: lambdaIntegration,
   });
 
+  // Public machine door (NO JWT authorizer) for the desktop service that runs
+  // a member's dev agents on their own computer. A device-code link first
+  // (/machine/link/start, /machine/link/poll — nothing to present yet), then a
+  // revocable machine token in a request header on every other call, verified
+  // by the connector (which also checks the org's opt-in flag). Pull model:
+  // the service asks, nothing is pushed to it. One static greedy route; the
+  // connector answers 404 on any sub-path it does not implement (and on every
+  // one until its own code ships — this route alone is inert).
+  httpApi.addRoutes({
+    path: "/machine/{proxy+}",
+    methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+    integration: lambdaIntegration,
+  });
+
   // Allow API Gateway to invoke the org Lambda on ANY route of this API.
   // HttpLambdaIntegration only grants a route-specific permission for /mcp,
   // but the org Lambda creates additional routes at runtime that target
