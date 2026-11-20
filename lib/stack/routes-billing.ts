@@ -106,6 +106,18 @@ export function createBillingRoutes(stack: cdk.Stack, ctx: StackContext): void {
     integration: lambdaIntegration,
   });
 
+  // Public org-scope confirmation door (NO JWT authorizer): the customer-space
+  // backend reads a member's pending request to let organization apps use
+  // their personal MCP connection, and confirms it after a passkey ceremony.
+  // Same AS-signed assertion as the console door, `aud` bound to each op's
+  // url. One static greedy route; the connector answers 404 on any op it does
+  // not implement.
+  httpApi.addRoutes({
+    path: "/mcp-scope/{proxy+}",
+    methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+    integration: lambdaIntegration,
+  });
+
   // Allow API Gateway to invoke the org Lambda on ANY route of this API.
   // HttpLambdaIntegration only grants a route-specific permission for /mcp,
   // but the org Lambda creates additional routes at runtime that target
