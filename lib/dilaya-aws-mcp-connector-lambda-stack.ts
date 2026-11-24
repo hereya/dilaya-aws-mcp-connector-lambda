@@ -61,6 +61,7 @@ import { applyPodTrust } from "./stack/region-router/pod-trust";
 import { wireSecondaryPod } from "./stack/secondary-pod";
 import { grantReplicaBucket } from "./stack/replica-bucket";
 import { createWifSigning } from "./stack/wif-signing";
+import { createEdgeAlarms } from "./stack/alarms/edge";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -112,9 +113,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     createFrontendAuthorizer(this, ctx);
     createAuthLambda(this, ctx);
 
-    // -----------------------------------------------------------------------
-    // Org Lambda: per-app Lambda management permissions
-    // -----------------------------------------------------------------------
+    // --- Org Lambda: per-app Lambda management permissions ---
 
     ctx.appLambdaArnPattern = `arn:aws:lambda:${this.region}:${this.account}:function:${ctx.appLambdaNamePrefix}*`;
 
@@ -216,5 +215,6 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     // Last for the same reason: one role statement appended, one env var.
     createWifSigning(this, ctx);
     applyForgeProvider(ctx); // last: one env var, only for forgeProvider=forgejo
+    createEdgeAlarms(this, ctx); // after every distribution; new resources only (alarms/edge.ts)
   }
 }
