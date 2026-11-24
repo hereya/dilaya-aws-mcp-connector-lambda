@@ -28,12 +28,13 @@ export const BRIDGE_STEP_MS = 5 * 60 * 1000;
  * sends none). A metric with no datapoint in the bucket is NOT published — CloudFront emits no
  * FunctionExecutionErrors when there are none, and the alarms treat missing as not breaching.
  * Any failure throws: the bridge's own Errors alarm is what says the watch went blind.
+ * `namespace` defaults to the router's; the edge alarms (alarms/edge.ts) run a second bridge.
  */
-export function metricsBridgeSource(metrics: BridgedMetric[]): string {
+export function metricsBridgeSource(metrics: BridgedMetric[], namespace: string = BRIDGE_NAMESPACE): string {
   return `'use strict';
 const { CloudWatchClient, GetMetricDataCommand, PutMetricDataCommand } = require('@aws-sdk/client-cloudwatch');
 const METRICS = ${JSON.stringify(metrics)};
-const NS = ${JSON.stringify(BRIDGE_NAMESPACE)};
+const NS = ${JSON.stringify(namespace)};
 const STEP = ${BRIDGE_STEP_MS};
 const src = new CloudWatchClient({ region: 'us-east-1' });
 const dst = new CloudWatchClient({});

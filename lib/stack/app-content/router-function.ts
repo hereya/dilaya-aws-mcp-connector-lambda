@@ -33,6 +33,13 @@ ${rp.prelude}function qsOf(request) {
 }
 async function handler(event) {
   var request = event.request;
+  // A client that sends its FRAGMENT on the wire (GET /auth/login#r=%2F — a bot
+  // replaying our own login 302 verbatim) hands us a raw '#' in uri. CloudFront
+  // accepts it in, but refuses it in a uri the function returns: 502
+  // FunctionValidationError, InvalidUri. A fragment is never part of the path:
+  // drop it here, before any branch reads or rewrites uri.
+  var hx = request.uri.indexOf('#');
+  if (hx >= 0) request.uri = request.uri.slice(0, hx);
   var host = request.headers.host.value.toLowerCase();
   var e;
   try {

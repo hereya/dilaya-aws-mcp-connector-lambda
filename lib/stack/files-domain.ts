@@ -132,6 +132,7 @@ export function createFilesDomain(stack: cdk.Stack, ctx: StackContext): void {
   new route53.AaaaRecord(stack, "FilesAliasAAAA", { zone, recordName: filesDomain, target });
 
   ctx.fn.addEnvironment("FILES_PUBLIC_HOST", filesDomain);
+  ctx.filesDistribution = distribution;
   new cdk.CfnOutput(stack, "FilesDistributionDomain", {
     value: distribution.distributionDomainName,
   });

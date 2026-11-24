@@ -149,6 +149,8 @@ export interface StackContext {
   appContentOriginPolicy: cloudfront.OriginRequestPolicy;
   appContentDistribution: cloudfront.Distribution;
   edgeLogBucket: s3.Bucket;
+  /** files-domain.ts's distribution, when filesDomain is set (alarms/edge.ts watches it). */
+  filesDistribution?: cloudfront.Distribution;
 
   // --- legacy per-org frontend distribution ---
   cfFunction: cloudfront.Function;
