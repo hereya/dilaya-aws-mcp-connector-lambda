@@ -30,6 +30,7 @@ export function createWifSigning(stack: cdk.Stack, ctx: StackContext): void {
     ? primaryKeyArn && createReplicaKey(stack, primaryKeyArn)
     : createPrimaryKey(stack);
   if (!key) return;
+  ctx.wifKey = key; // dev-agent-worker.ts signs with it too
 
   ctx.fn.addEnvironment("WIF_KMS_KEY_ID", key.id);
   ctx.fn.addToRolePolicy(
