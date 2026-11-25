@@ -61,6 +61,7 @@ import { applyPodTrust } from "./stack/region-router/pod-trust";
 import { wireSecondaryPod } from "./stack/secondary-pod";
 import { grantReplicaBucket } from "./stack/replica-bucket";
 import { createWifSigning } from "./stack/wif-signing";
+import { createDevAgentWorker } from "./stack/dev-agent-worker";
 import { createEdgeAlarms } from "./stack/alarms/edge";
 
 /**
@@ -209,12 +210,11 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     applyPodTrust(this, ctx);
     createRegionRouter(this, ctx);
 
-    // Région CA P2 lot 3, last: two role statements appended, nothing re-ordered.
-    grantReplicaBucket(this, ctx);
+    grantReplicaBucket(this, ctx); // Région CA P2 lot 3, last: two role statements appended, nothing re-ordered.
 
-    // Last for the same reason: one role statement appended, one env var.
-    createWifSigning(this, ctx);
+    createWifSigning(this, ctx); // last for the same reason: one role statement appended, one env var
     applyForgeProvider(ctx); // last: one env var, only for forgeProvider=forgejo
     createEdgeAlarms(this, ctx); // after every distribution; new resources only (alarms/edge.ts)
+    createDevAgentWorker(this, ctx); // after the WIF key; inert unless devAgentWorker=true (then +1 connector statement)
   }
 }

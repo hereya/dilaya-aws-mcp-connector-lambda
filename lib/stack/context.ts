@@ -152,6 +152,9 @@ export interface StackContext {
   /** files-domain.ts's distribution, when filesDomain is set (alarms/edge.ts watches it). */
   filesDistribution?: cloudfront.Distribution;
 
+  /** wif-signing.ts's key (primary or replica); undefined → this pod has none. */
+  wifKey?: { id: string; arn: string };
+
   // --- legacy per-org frontend distribution ---
   cfFunction: cloudfront.Function;
   cloudfrontCertificate: acm.DnsValidatedCertificate;

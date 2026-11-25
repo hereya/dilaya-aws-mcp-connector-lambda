@@ -649,6 +649,30 @@ from its static-assets bucket (OAC). A `g` with no entry → 503 at the edge. Ab
 function (golden a–g). Prerequisites on the CA side (not in this package yet): a CA static bucket whose
 policy admits this account's distributions, and the CA pod checking the same `appContentOriginSecret`.
 
+## The integrated dev agent's worker: `devAgentWorker` (off by default)
+
+`devAgentWorker=true` (`lib/stack/dev-agent-worker.ts`) creates an SQS **FIFO** queue
+`dilaya-dev-agent.fifo` (content-based dedup off, visibility 5 400 s = 6 × the worker timeout) with
+a FIFO DLQ `dilaya-dev-agent-dlq.fifo` (maxReceiveCount 3, 14 days), and a `DevAgentWorker` Lambda
+built from the connector's own `dist` asset with handler `dev-agent-handler.handler` (900 s,
+1 024 MB), fed by an event source mapping (batch 1, max concurrency 5, partial batch failures).
+Worker IAM: `kms:Sign` on the WIF signing key, SSM reads under `/dilaya/_platform/dev-agent/*`
+(+ `kms:Decrypt` via SSM for that prefix), app state table read/write, registry GetItem/Query,
+`sqs:SendMessage` on its own queue (continuation). Alarms: DLQ depth ≥ 1, worker Errors ≥ 1 (5 min),
+on the Telegram relay like the others. Outputs: `DevAgentQueueUrl`, `DevAgentQueueArn`,
+`DevAgentDlqUrl`, `DevAgentWorkerName`.
+
+- **The connector gets one statement and NO env var**: `sqs:SendMessage` on the queue ARN. It derives
+  the URL itself — `https://sqs.<region>.amazonaws.com/<account>/dilaya-dev-agent.fifo` — to keep
+  its 4 KB environment untouched. The name is fixed per account+region: a second stack with the
+  worker on in the same account+region collides at deploy (on purpose).
+- Messages: `MessageGroupId = <orgId>#<app>` (one run per app at a time), an explicit
+  `MessageDeduplicationId` (the console message id).
+- ⚠️ **Turn it on only once the deployed connector bundle ships `dev-agent-handler.handler`**: before,
+  the function sits idle, but any queued message fails, retries 3 times and lands in the DLQ.
+- Needs a WIF key: on a secondary pod, `wifKmsKeyArn` too (refused at synth otherwise).
+- Absent, empty or `false` → nothing created, template byte-identical. Any other value fails the synth.
+
 ## Source layout — the stack is a list of build steps
 
 `lib/dilaya-aws-mcp-connector-lambda-stack.ts` used to be one 3 100-line constructor. It is now a
