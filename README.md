@@ -673,6 +673,63 @@ on the Telegram relay like the others. Outputs: `DevAgentQueueUrl`, `DevAgentQue
 - Needs a WIF key: on a secondary pod, `wifKmsKeyArn` too (refused at synth otherwise).
 - Absent, empty or `false` → nothing created, template byte-identical. Any other value fails the synth.
 
+## The App UI sandbox origin: `appUiFrame` (off by default)
+
+`appUiFrame=true` (`lib/stack/app-ui-frame.ts`, headers in `app-ui-frame-headers.ts`) creates the
+origin that serves the AI-written static bundles of an app's internal interface, shown by the console
+in `<iframe sandbox="allow-scripts allow-forms">` (no `allow-same-origin`: an opaque origin). One
+dedicated CloudFront distribution, alias `ui.<appContentDomain>` (or `appUiDomain`):
+
+- **Origin**: the pod's static-assets bucket (`APP_STATIC_BUCKET`) through the pod's existing OAC,
+  with **origin path `/_appui`**. Bundles live at `_appui/<org>/<app>/<hash>/…` and are served at
+  `https://<ui host>/<org>/<app>/<hash>/…`.
+- **Why the origin path is the boundary, not the bucket policy**: the bucket's policy already lets every
+  distribution of the account read `*` (runtime-created BYOD distributions), so no extra statement can
+  narrow this one. CloudFront prefixes every origin request with `/_appui`, so every key it can ask for
+  starts with `_appui/`; a viewer-request function refuses `..`, `//`, backslashes and encoded
+  `.`/`/`/`\` (400) so this does not depend on how S3 treats dot segments. One scoped statement
+  (`AppUiFrameRead`: GetObject on `_appui/*`, SourceArn = this distribution) is still added; it is what
+  keeps the distribution working if the broad grant is ever narrowed.
+- **Behavior**: GET/HEAD only, HTTPS (redirect), no cookie / query string / header forwarded or in the
+  cache key, cached 365 days (paths are content-hashed), gzip + brotli.
+- **Response headers policy**: `Content-Security-Policy: default-src 'none'; script-src 'self';
+  style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://<filesDomain>; font-src 'self'
+  data:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none';
+  form-action 'none'; frame-ancestors <console origin>; sandbox allow-scripts allow-forms` (the
+  `https://<files host>` source only when `filesDomain` / `filesPublicHost` is set),
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, HSTS (1 year), a deny-all
+  `Permissions-Policy`, and CORS `Access-Control-Allow-Origin: *` (no credentials) — a sandboxed
+  document's module scripts are CORS requests with `Origin: null`.
+- **Console origin** (`frame-ancestors`): `appUiConsoleOrigin`, else the origin of `oauthServerUrl`.
+- **DNS + outputs**: A + AAAA alias records; output `AppUiOrigin`; the connector gets ONE env var,
+  `APP_UI_ORIGIN=https://<ui host>` (4 KB env cap).
+- Needs this pod's own app-content edge (`appContentDomain` on a primary pod). Sub-parameters without
+  `appUiFrame=true` are refused. Absent / empty / `false` → nothing created, template byte-identical
+  (golden a–l unchanged). No edge alarm watches this distribution yet.
+
+### ⚠️ `ui.<appContentDomain>` next to the `*.<appContentDomain>` alias
+
+- **CloudFront allows the overlap**: an exact name cannot be on two distributions, but a wildcard
+  (`*.example-apps.eu`) on one and a more specific name (`ui.example-apps.eu`) on another is allowed,
+  and "CloudFront sends the request to the distribution with the more specific name match, regardless
+  of the distribution that the DNS record points to" (CloudFront developer guide, *Alternate domain
+  names → Duplicate and overlapping alternate domain names*). Tenant vanity hosts are always
+  `<app>-<slug>` (hyphenated), so the `ui` label can never be a tenant's.
+- **But adding the specific alias can be refused**: "When you have an existing wildcard DNS entry
+  pointing to a CloudFront distribution, if you try to add a new CNAME with a more specific name" →
+  *incorrectly configured DNS record that points to another CloudFront distribution* (troubleshooting
+  guide). The documented fix is to make the specific name stop resolving to the other distribution
+  first. In one CloudFormation deploy the alias records can only come AFTER the distribution, so the
+  stack creates a **TXT record at `ui.<appContentDomain>` first** (the distribution `DependsOn` it):
+  Route 53 answers a name that has records "of any type" from that name, not from the wildcard.
+- **Risk, stated plainly**: that TXT trick is inferred from the docs, **not proven on a live account**.
+  If CloudFront still refuses the alias (or a resolver serves a cached wildcard answer), the deploy fails
+  at `AppUiDistribution` and CloudFormation rolls back the new resources only — nothing existing is
+  touched. Prove it in the S0 spike on throwaway resources before turning it on in production.
+- **Fallback, implemented**: `appUiDomain` + `appUiZoneId` + `appUiCertArn` — a dedicated domain
+  (apex of its own zone, us-east-1 certificate), no wildcard, no conflict. The certificate is passed in,
+  like the app-content one.
+
 ## Source layout — the stack is a list of build steps
 
 `lib/dilaya-aws-mcp-connector-lambda-stack.ts` used to be one 3 100-line constructor. It is now a

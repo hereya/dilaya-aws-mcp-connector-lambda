@@ -63,6 +63,7 @@ import { grantReplicaBucket } from "./stack/replica-bucket";
 import { createWifSigning } from "./stack/wif-signing";
 import { createDevAgentWorker } from "./stack/dev-agent-worker";
 import { createEdgeAlarms } from "./stack/alarms/edge";
+import { createAppUiFrame } from "./stack/app-ui-frame";
 
 /**
  * The connector's deploy stack, as an ordered list of build steps.
@@ -115,9 +116,7 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     createAuthLambda(this, ctx);
 
     // --- Org Lambda: per-app Lambda management permissions ---
-
     ctx.appLambdaArnPattern = `arn:aws:lambda:${this.region}:${this.account}:function:${ctx.appLambdaNamePrefix}*`;
-
     createFrontDoor(this, ctx);
     createAppCrons(this, ctx);
     grantAppLambdaManagement(this, ctx);
@@ -216,5 +215,6 @@ export class DilayaConnectorLambdaStack extends cdk.Stack {
     applyForgeProvider(ctx); // last: one env var, only for forgeProvider=forgejo
     createEdgeAlarms(this, ctx); // after every distribution; new resources only (alarms/edge.ts)
     createDevAgentWorker(this, ctx); // after the WIF key; inert unless devAgentWorker=true (then +1 connector statement)
+    createAppUiFrame(this, ctx); // last: inert unless appUiFrame=true (then new resources, one bucket statement, one env var)
   }
 }
