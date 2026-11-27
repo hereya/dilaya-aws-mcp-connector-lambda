@@ -28,7 +28,7 @@ RUN microdnf install -y --setopt=install_weak_deps=0 tar xz gzip git findutils p
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 WORKDIR /opt/sandbox
-COPY package.json server.mjs egress.mjs forwarder.mjs ./
+COPY package.json server.mjs egress.mjs forwarder.mjs static.mjs ./
 RUN npm install --omit=dev --no-audit --no-fund && npx playwright install --only-shell chromium
 
 # The workspace and the user commands run unprivileged.
