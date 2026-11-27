@@ -8,6 +8,7 @@ import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import * as path from "path";
 import type { StackContext } from "./context";
 import { bedrockEnv, grantWorkerBedrock } from "./dev-agent-bedrock";
+import { attachWorkerSandbox } from "./dev-agent-sandbox";
 
 /**
  * The integrated dev agent's WORKER — the Lambda that runs an agent turn for a
@@ -124,6 +125,7 @@ export function createDevAgentWorker(stack: cdk.Stack, ctx: StackContext): void 
   );
   grantWorker(stack, ctx, worker, queue, key.arn, registryTableName);
   grantWorkerBedrock(stack, worker);
+  attachWorkerSandbox(stack, worker); // devAgentSandboxOrgs (./dev-agent-sandbox.ts): absent = nothing
 
   // The connector enqueues; it may do nothing else with the queue.
   ctx.fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["sqs:SendMessage"], resources: [queue.queueArn] }));

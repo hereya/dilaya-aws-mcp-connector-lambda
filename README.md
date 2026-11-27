@@ -796,3 +796,26 @@ manual dispatch). `hereya publish` sends metadata only (repository URL, commit, 
 ```bash
 npm run build   # tsc (typecheck; the .js it emits is not shipped)
 ```
+
+## The dev agent's sandbox computer: `devAgentSandboxOrgs` (empty by default)
+
+`devAgentSandboxOrgs` (`lib/stack/dev-agent-sandbox.ts`) is a comma-separated list of organization
+ids (UUIDs) whose integrated dev agent may use an isolated computer to build, test and check that
+a page renders. Empty → nothing is created. When set (with `devAgentWorker=true`):
+
+- an `AWS::Lambda::MicrovmImage` is built by the service from `lib/sandbox-image/` (zipped as a
+  CDK asset): the managed AL2023 base, Node 22, npm, git, Playwright's headless Chromium and a
+  dependency-free control server (`server.mjs`). Port 8080 = a JSON API over `/workspace`
+  (`POST /v1/{list,read,write,edit,delete,search,exec,render-check}`), reached only through the
+  MicroVM's authenticated endpoint; port 9000 = the lifecycle hooks. User commands run as an
+  unprivileged user. ARM64, 4 GiB.
+- a build role (read that asset, write the image's log group) and an execution role (logs only:
+  the code inside the VM gets no AWS access), both trusting Lambda for this account and image.
+- the dev agent worker gets `DEV_AGENT_SANDBOX_ORGS`, `DEV_AGENT_SANDBOX_IMAGE_ARN`,
+  `DEV_AGENT_SANDBOX_EXEC_ROLE_ARN` and may run, inspect, suspend, resume, terminate and mint
+  endpoint tokens for MicroVMs of that image only, pass the AWS-managed network connectors, and
+  pass the execution role to Lambda. The connector function is untouched.
+
+The image is built during the deploy (its `/ready` and `/validate` hooks gate the build): a broken
+image fails the stack update, which rolls back. Lambda MicroVMs exist in a few regions only
+(eu-west-1 among them); the base image version is pinned in `SANDBOX_BASE_VERSION`.
