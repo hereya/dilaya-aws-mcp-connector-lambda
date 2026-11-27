@@ -9,14 +9,15 @@
 # already there as curl-minimal, so it is not installed again (the full curl would conflict).
 # Verify any change with `docker build --platform linux/arm64 .` before publishing.
 #
-# Outbound network (egress.mjs): the agent user may reach ONLY registry.npmjs.org, through a local
-# CONNECT proxy; nftables (owner match) drops everything else it sends. Applying the ruleset needs
-# CAP_NET_ADMIN for root, hence additionalOsCapabilities ["ALL"] on the image (the agent user,
-# uid 1001, gets no capability: setuid drops them).
+# Outbound network (egress.mjs): the agent user may reach ONLY registry.npmjs.org. Its commands run
+# inside a network namespace with only loopback (unshare/nsenter/setpriv from util-linux, ip from
+# iproute); the one way out is a local forwarder to the root allow-list proxy. No netfilter: the
+# MicroVM kernel does not support nf_tables. Creating the namespace needs CAP_SYS_ADMIN for root,
+# hence additionalOsCapabilities ["ALL"] on the image (the agent gets none: setpriv clears them).
 FROM public.ecr.aws/lambda/microvms:al2023-minimal
 
 ARG NODE_VERSION=22.12.0
-RUN microdnf install -y --setopt=install_weak_deps=0 tar xz gzip git findutils procps-ng shadow-utils nftables \
+RUN microdnf install -y --setopt=install_weak_deps=0 tar xz gzip git findutils procps-ng shadow-utils util-linux iproute \
       nss atk at-spi2-atk cups-libs libdrm libxkbcommon libXcomposite libXdamage libXrandr \
       libXfixes libXext libX11 libxcb mesa-libgbm pango alsa-lib \
   && microdnf clean all \
@@ -27,7 +28,7 @@ RUN microdnf install -y --setopt=install_weak_deps=0 tar xz gzip git findutils p
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 WORKDIR /opt/sandbox
-COPY package.json server.mjs egress.mjs ./
+COPY package.json server.mjs egress.mjs forwarder.mjs ./
 RUN npm install --omit=dev --no-audit --no-fund && npx playwright install --only-shell chromium
 
 # The workspace and the user commands run unprivileged.
