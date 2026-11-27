@@ -102,5 +102,9 @@ test("the image directory has a Dockerfile FROM the managed base and the control
   const df = fs.readFileSync(path.join(SANDBOX_IMAGE_DIR, "Dockerfile"), "utf8");
   expect(df).toMatch(/^FROM public\.ecr\.aws\/lambda\/microvms:al2023-minimal$/m);
   expect(df).toContain("EXPOSE 8080 9000");
+  // The base container's dnf IS microdnf: a dnf-only option (--allowerasing) fails the service build at once.
+  const code = df.split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
+  expect(code).not.toMatch(/--allowerasing/);
+  expect(code).not.toMatch(/^RUN dnf /m);
   expect(fs.existsSync(path.join(SANDBOX_IMAGE_DIR, "server.mjs"))).toBe(true);
 });

@@ -2,5 +2,5 @@
   "name": "dilaya-dev-sandbox",
   "private": true,
   "type": "module",
-  "dependencies": { "playwright-core": "1.49.1", "playwright": "1.49.1" }
+  "dependencies": { "playwright-core": "1.57.0", "playwright": "1.57.0" }
 }

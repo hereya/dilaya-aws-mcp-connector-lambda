@@ -819,3 +819,5 @@ a page renders. Empty → nothing is created. When set (with `devAgentWorker=tru
 The image is built during the deploy (its `/ready` and `/validate` hooks gate the build): a broken
 image fails the stack update, which rolls back. Lambda MicroVMs exist in a few regions only
 (eu-west-1 among them); the base image version is pinned in `SANDBOX_BASE_VERSION`.
+
+**Build check (0.1.160).** The image's `FROM` (`public.ecr.aws/lambda/microvms:al2023-minimal`) ships **microdnf** (`dnf` is a symlink to it), so dnf-only options such as `--allowerasing` fail the service build within a minute (`CONTAINER_BUILD_FAILED`; the stack update rolls back, and the build log group is deleted with it). curl is already present as curl-minimal. Validate any change locally with `docker build --platform linux/arm64 lib/sandbox-image` before publishing. Playwright is pinned to a version that downloads from `cdn.playwright.dev` and installs the headless shell only (`--only-shell`).
