@@ -61,6 +61,8 @@ test("set: one image (ARM64, managed base, hooks on 9000, internet egress) built
   expect(p.Hooks.MicrovmImageHooks.Ready).toBe("ENABLED");
   expect(JSON.stringify(p.EgressNetworkConnectors)).toContain("aws-network-connector:INTERNET_EGRESS");
   expect(JSON.stringify(p.CodeArtifact.Uri)).toContain("s3://");
+  // root needs CAP_NET_ADMIN to install the egress lock (lib/sandbox-image/egress.mjs).
+  expect(p.AdditionalOsCapabilities).toEqual(["ALL"]);
 });
 
 test("set: the worker gets the three env vars and drives MicroVMs of THAT image only", () => {
@@ -107,4 +109,7 @@ test("the image directory has a Dockerfile FROM the managed base and the control
   expect(code).not.toMatch(/--allowerasing/);
   expect(code).not.toMatch(/^RUN dnf /m);
   expect(fs.existsSync(path.join(SANDBOX_IMAGE_DIR, "server.mjs"))).toBe(true);
+  // The egress lock ships in the image: nftables installed, egress.mjs copied next to the server.
+  expect(code).toMatch(/microdnf install[^\n]* nftables/);
+  expect(code).toMatch(/^COPY [^\n]*egress\.mjs/m);
 });

@@ -89,9 +89,12 @@ export function attachWorkerSandbox(stack: cdk.Stack, worker: lambda.Function): 
     codeArtifact: { uri: asset.s3ObjectUrl },
     cpuConfigurations: [{ architecture: "ARM_64" }],
     resources: [{ minimumMemoryInMiB: SANDBOX_MEMORY_MIB }],
-    // npm install / git clone need the internet: the AWS-managed egress connector, named explicitly.
+    // npm install needs the registry: the AWS-managed egress connector, named explicitly. INSIDE the VM
+    // the agent user may reach registry.npmjs.org only (lib/sandbox-image/egress.mjs, nftables + proxy).
     egressNetworkConnectors: [`arn:${stack.partition}:lambda:${stack.region}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`],
-    additionalOsCapabilities: [],
+    // CAP_NET_ADMIN for root to install the egress ruleset; the only supported value is "ALL". The
+    // agent user (uid 1001) runs without capabilities.
+    additionalOsCapabilities: ["ALL"],
     environmentVariables: [],
     logging: { cloudWatch: { logGroup: logGroup.logGroupName } },
     hooks: {
