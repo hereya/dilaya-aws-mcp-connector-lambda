@@ -673,6 +673,16 @@ on the Telegram relay like the others. Outputs: `DevAgentQueueUrl`, `DevAgentQue
 - Needs a WIF key: on a secondary pod, `wifKmsKeyArn` too (refused at synth otherwise).
 - Absent, empty or `false` → nothing created, template byte-identical. Any other value fails the synth.
 
+## The dev agent on Bedrock EU: `devAgentBedrockOrgs` (empty by default)
+
+`devAgentBedrockOrgs` (`lib/stack/dev-agent-bedrock.ts`) is a comma-separated list of organization ids
+(UUIDs) whose integrated dev agent calls the model on AWS Bedrock through the EU cross-region inference
+profiles `eu.anthropic.claude-haiku-5-5` / `eu.anthropic.claude-sonnet-5-5`. Only with `devAgentWorker=true`:
+the worker gets `DEV_AGENT_BEDROCK_ORGS`, and its role gains `bedrock:InvokeModel` on those two profiles
+(stack account + region) and on the underlying foundation models in the EU regions the profiles route to,
+conditioned on `bedrock:InferenceProfileArn` (the models cannot be called directly). Absent / empty →
+nothing changes, template byte-identical. A malformed list or a non-EU stack region fails the synth.
+
 ## The App UI sandbox origin: `appUiFrame` (off by default)
 
 `appUiFrame=true` (`lib/stack/app-ui-frame.ts`, headers in `app-ui-frame-headers.ts`) creates the
